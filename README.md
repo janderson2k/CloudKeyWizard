@@ -1,5 +1,9 @@
 # CloudKey Wizard
 
+**[⬇ Download the latest release](https://github.com/janderson2k/CloudKeyWizard/releases/latest)** —
+a single self-contained `CloudKeyWizard.exe`, no install needed. Read the in-app first-run
+disclaimer before using it against real hardware.
+
 Built by [Jay Anderson](https://fullduplextech.com) of FullDuplexTech.com — a portable Windows
 (WPF) wizard that converts a Ubiquiti UniFi Cloud Key Gen2 / Gen2 Plus into a clean, hardened
 Debian server, by orchestrating the [jnovack/cloudkey](https://github.com/jnovack/cloudkey) Phase 1
