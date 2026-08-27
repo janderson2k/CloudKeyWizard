@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
+  <!-- Runbook scripts bundled straight into the exe: no runtime GitHub dependency. See
+       Services/BundledScriptProvider.cs and Scripts/runbook/README.md for provenance. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Scripts\runbook\*.sh" />
+  </ItemGroup>
+
+  <!-- FDT.Scout: app-authored, pre-cross-compiled linux/arm64 binary + its systemd unit, embedded
+       the same way as the runbook scripts. See Scripts/fdtscout/README.md and
+       Services/ExtraCatalog.cs's "fdtscout" Extra. Named explicitly (not a *.* glob) so README.md
+       in the same folder never gets swept in as a resource. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Scripts\fdtscout\fdtscout-arm64" />
+    <EmbeddedResource Include="Scripts\fdtscout\fdtscout.service" />
+  </ItemGroup>
+
+</Project>

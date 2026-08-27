@@ -1,0 +1,576 @@
+<Window x:Class="CloudKeyWizard.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:models="clr-namespace:CloudKeyWizard.Models"
+        xmlns:local="clr-namespace:CloudKeyWizard"
+        mc:Ignorable="d"
+        Title="CloudKey Wizard" Height="880" Width="1440" MinHeight="700" MinWidth="1150"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <!-- Four mutually-exclusive per-Param edit templates, picked by ExtraParamTemplateSelector
+             based on ExtraParam's fixed (init-only) IsMultiline/IsDropdown/IsSecret flags: each
+             instantiates ONLY the one control relevant to that param, unlike the previous single
+             shared DataTemplate that always instantiated all four alternate controls together with
+             only Visibility toggling between them. That structure is what actually broke the
+             password field (confirmed live, twice, after two earlier fixes to PasswordBoxHelper
+             both turned out necessary-but-insufficient): the ComboBox's SelectedItem, TwoWay-bound
+             to the same Value with an EMPTY Options list (since non-dropdown params never set
+             Options), resolves to null every time Value changes out from under it, since nothing in
+             an empty list ever matches, and because that binding is TwoWay, WPF pushes that null
+             straight back into Value, silently wiping out whatever was just typed into the
+             PasswordBox a moment earlier. Removing the ComboBox from every template except the one
+             that's actually meant to have it removes the interference at its root, rather than
+             continuing to guess at WPF's exact binding-resolution ordering. -->
+        <DataTemplate x:Key="PlainParamTemplate" DataType="{x:Type models:ExtraParam}">
+            <StackPanel Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource MutedText}" FontSize="12"/>
+                    <TextBlock Text=" (required)" Foreground="{DynamicResource DangerRed}" FontSize="10" VerticalAlignment="Center"
+                               Visibility="{Binding IsRequired, Converter={StaticResource BoolToVisibility}}"/>
+                </StackPanel>
+                <TextBox Width="320" HorizontalAlignment="Left" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Text="{Binding HelpText}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0"
+                           Visibility="{Binding HelpText, Converter={StaticResource StringHasValueToVisibility}}"/>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="DropdownParamTemplate" DataType="{x:Type models:ExtraParam}">
+            <StackPanel Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource MutedText}" FontSize="12"/>
+                    <TextBlock Text=" (required)" Foreground="{DynamicResource DangerRed}" FontSize="10" VerticalAlignment="Center"
+                               Visibility="{Binding IsRequired, Converter={StaticResource BoolToVisibility}}"/>
+                </StackPanel>
+                <ComboBox Width="220" HorizontalAlignment="Left" ItemsSource="{Binding Options}"
+                          SelectedItem="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Text="{Binding HelpText}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0"
+                           Visibility="{Binding HelpText, Converter={StaticResource StringHasValueToVisibility}}"/>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="SecretParamTemplate" DataType="{x:Type models:ExtraParam}">
+            <StackPanel Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource MutedText}" FontSize="12"/>
+                    <TextBlock Text=" (required)" Foreground="{DynamicResource DangerRed}" FontSize="10" VerticalAlignment="Center"
+                               Visibility="{Binding IsRequired, Converter={StaticResource BoolToVisibility}}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                             Visibility="{Binding ShowMaskedBox, Converter={StaticResource BoolToVisibility}}">
+                    <PasswordBox Width="280" local:PasswordBoxHelper.BoundPassword="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                    <Button Content="Show" Padding="8,3" Margin="6,0,0,0" Command="{Binding DataContext.ToggleSecretRevealedCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                             Visibility="{Binding ShowRevealedSecretBox, Converter={StaticResource BoolToVisibility}}">
+                    <TextBox Width="280" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                    <Button Content="Hide" Padding="8,3" Margin="6,0,0,0" Command="{Binding DataContext.ToggleSecretRevealedCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding HelpText}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0"
+                           Visibility="{Binding HelpText, Converter={StaticResource StringHasValueToVisibility}}"/>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="MultilineParamTemplate" DataType="{x:Type models:ExtraParam}">
+            <StackPanel Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource MutedText}" FontSize="12"/>
+                    <TextBlock Text=" (required)" Foreground="{DynamicResource DangerRed}" FontSize="10" VerticalAlignment="Center"
+                               Visibility="{Binding IsRequired, Converter={StaticResource BoolToVisibility}}"/>
+                </StackPanel>
+                <TextBox Width="420" Height="120" HorizontalAlignment="Left" AcceptsReturn="True" TextWrapping="NoWrap"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                         FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="12"
+                         Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Text="{Binding HelpText}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0"
+                           Visibility="{Binding HelpText, Converter={StaticResource StringHasValueToVisibility}}"/>
+            </StackPanel>
+        </DataTemplate>
+        <local:ExtraParamTemplateSelector x:Key="ExtraParamSelector"
+            PlainTemplate="{StaticResource PlainParamTemplate}"
+            DropdownTemplate="{StaticResource DropdownParamTemplate}"
+            SecretTemplate="{StaticResource SecretParamTemplate}"
+            MultilineTemplate="{StaticResource MultilineParamTemplate}"/>
+
+        <DataTemplate x:Key="ExtraItemTemplate" DataType="{x:Type models:ExtraItem}">
+            <Border Background="{DynamicResource BgPanel}" CornerRadius="4" Padding="12,10" Margin="0,0,0,8">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Status, Converter={StaticResource StatusToGlyph}}"
+                                   Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}" FontWeight="Bold" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="20,3,0,8"/>
+
+                    <StackPanel Margin="20,0,0,0" Visibility="{Binding IsAvailable, Converter={StaticResource BoolToVisibility}}">
+                        <ItemsControl ItemsSource="{Binding Params}" Margin="0,0,0,8"
+                                      ItemTemplateSelector="{StaticResource ExtraParamSelector}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Run" Padding="10,4"
+                                    Command="{Binding DataContext.RunExtraCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}"/>
+                            <TextBlock Text="{Binding Detail}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource MutedText}" FontSize="11"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="Coming soon" Margin="20,0,0,0" FontStyle="Italic" Style="{StaticResource MutedText}" FontSize="11"
+                               Visibility="{Binding IsAvailable, Converter={StaticResource InverseBoolToVisibility}}"/>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============================= Menu bar ============================= -->
+        <Menu Grid.Row="0" Background="{DynamicResource BgPanel}">
+            <MenuItem Header="_File">
+                <MenuItem Header="Forget This Host" Command="{Binding ForgetCurrentHostCommand}"/>
+                <MenuItem Header="Clear All Known Hosts" Command="{Binding ClearKnownHostsCommand}"/>
+                <Separator/>
+                <MenuItem Header="Export Known Hosts..." Click="ExportHostsMenuItem_Click"/>
+                <MenuItem Header="Import Known Hosts..." Click="ImportHostsMenuItem_Click"/>
+                <Separator/>
+                <MenuItem Header="Exit" Click="ExitMenuItem_Click"/>
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="Dark Mode" IsCheckable="True" IsChecked="{Binding IsDarkTheme}"/>
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="About" Click="AboutMenuItem_Click"/>
+                <MenuItem Header="View Changelog" Click="ChangelogMenuItem_Click"/>
+                <MenuItem Header="View Disclaimer Again" Command="{Binding ShowDisclaimerCommand}"/>
+                <MenuItem Header="Troubleshooting Tips" Click="TroubleshootingMenuItem_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- ============================= Top bar ============================= -->
+        <Border Grid.Row="1" Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,0,1" Padding="18,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="CloudKey Wizard" FontSize="17" FontWeight="Bold"/>
+                    <TextBlock Text="UniFi Cloud Key → hardened Linux server" Style="{StaticResource MutedText}" Margin="14,3,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding BusyMessage}" Margin="0,0,10,0" Style="{StaticResource MutedText}"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" VerticalAlignment="Center"/>
+                    <Button Content="Cancel" Margin="0,0,16,0" Padding="10,4" Command="{Binding CancelCommand}"
+                            Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}"/>
+                    <Ellipse Width="9" Height="9" Margin="0,0,7,0" Fill="{Binding IsConnected, Converter={StaticResource BoolToStatusDotBrush}}"/>
+                    <TextBlock Text="{Binding ConnectionStatusText}" VerticalAlignment="Center"/>
+                    <Button Content="Disconnect" Margin="14,0,0,0" Padding="10,4" Command="{Binding DisconnectCommand}"
+                            Visibility="{Binding IsConnected, Converter={StaticResource BoolToVisibility}}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ============================= Main 3-pane layout ============================= -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="270"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="2*" MinWidth="380"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="460" MinWidth="320"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ==== Left: step nav ==== -->
+            <Border Grid.Column="0" Background="{DynamicResource BgPanel}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ListBox x:Name="StepsList" ItemsSource="{Binding Steps}" SelectedItem="{Binding SelectedStep}"
+                             Margin="8" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="StepsList_SelectionChanged">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="10,8"/>
+                                <Setter Property="Margin" Value="0,2"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgPanelAlt}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgInput}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:PhaseStep}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Status, Converter={StaticResource StatusToGlyph}}"
+                                               Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}" FontWeight="Bold" VerticalAlignment="Top"/>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11"
+                                                   Visibility="{Binding Detail, Converter={StaticResource NullToVisibility}}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </ScrollViewer>
+            </Border>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="{DynamicResource BorderSubtle}"/>
+
+            <!-- ==== Middle: current step ==== -->
+            <Border Grid.Column="2" Background="{DynamicResource BgWindow}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,20">
+                    <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="{Binding SelectedStep.Title}" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <Border Background="{Binding SelectedStep.Severity, Converter={StaticResource SeverityToBrush}}" CornerRadius="4"
+                                Padding="10,6" Margin="0,8,0,14"
+                                Visibility="{Binding SelectedStep.Severity, Converter={StaticResource SeverityIsWarningToVisibility}}">
+                            <TextBlock Text="{Binding SelectedStep.Severity, Converter={StaticResource SeverityToLabel}}" FontWeight="Bold"/>
+                        </Border>
+
+                        <TextBlock Text="{Binding SelectedStep.Description}" TextWrapping="Wrap" Margin="0,0,0,18" LineHeight="20"/>
+
+                        <!-- ===== Connect page ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=connect}">
+                            <StackPanel Visibility="{Binding KnownHosts.Count, Converter={StaticResource IntGreaterThanZeroToVisibility}}" Margin="0,0,0,14">
+                                <TextBlock Text="Previously connected" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ComboBox Width="440" ItemsSource="{Binding KnownHosts}" SelectedItem="{Binding SelectedKnownHost}"/>
+                                    <Button Content="Forget" Margin="8,0,0,0" Padding="8,3" Command="{Binding ForgetCurrentHostCommand}"/>
+                                </StackPanel>
+                                <TextBlock Text="Picking one fills in the fields below (never the password) -- it doesn't connect by itself."
+                                           TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,4,0,0"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Host / IP" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                            <TextBox Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Username" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                            <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <RadioButton Content="Password" IsChecked="{Binding UseKeyAuth, Converter={StaticResource InverseBool}}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                <RadioButton Content="Private key" IsChecked="{Binding UseKeyAuth}" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding UseKeyAuth, Converter={StaticResource InverseBoolToVisibility}}">
+                                <TextBlock Text="Password" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                                <PasswordBox x:Name="PasswordInput" Margin="0,0,0,10" PasswordChanged="PasswordInput_PasswordChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding UseKeyAuth, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Private key path" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                                <TextBox Text="{Binding PrivateKeyPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                            </StackPanel>
+
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,0,0,14" FontSize="12"
+                                       Text="SSH must already be enabled on the Cloud Key (UniFi Console → System Settings → Advanced → SSH). That step is manual and happens on the device itself, not here."/>
+
+                            <Button Content="Connect" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Command="{Binding ConnectCommand}"/>
+                        </StackPanel>
+
+                        <!-- ===== Preflight page ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=preflight}">
+                            <ItemsControl ItemsSource="{Binding PreflightChecks}" Margin="0,0,0,14">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:PreflightCheckResult}">
+                                        <Border Background="{DynamicResource BgPanel}" CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock FontWeight="Bold" Margin="0,0,8,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="✕"/>
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerRed}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Passed}" Value="True">
+                                                                        <Setter Property="Text" Value="✓"/>
+                                                                        <Setter Property="Foreground" Value="#2EA05A"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="20,3,0,0"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button Content="Re-run Health Check" HorizontalAlignment="Left" Command="{Binding RunPreflightCommand}"/>
+                        </StackPanel>
+
+                        <!-- ===== Reboot page ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=reboot}">
+                            <Button Content="Reboot &amp; Wait for Reconnect" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Command="{Binding RebootCommand}"/>
+                        </StackPanel>
+
+                        <!-- ===== Generic script step (purge / base-tools / verify / format-volume / security) ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.ScriptFileName, Converter={StaticResource NullToVisibility}}">
+
+                            <!-- format-volume: live device picker, never a typed path -->
+                            <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=format-volume}" Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                    <TextBlock Text="Target drive" Style="{StaticResource MutedText}" VerticalAlignment="Center"/>
+                                    <Button Content="Refresh" Margin="10,0,0,0" Padding="8,3" Command="{Binding RefreshDevicesCommand}"/>
+                                </StackPanel>
+                                <ComboBox ItemsSource="{Binding BlockDevices}" SelectedItem="{Binding SelectedDevice}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:BlockDeviceInfo}">
+                                            <TextBlock Text="{Binding}" Foreground="{Binding Risk, Converter={StaticResource DeviceRiskToBrush}}"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <TextBlock Text="This list comes from `lsblk` on the box itself. A single obvious candidate is pre-selected (✓ Suggested, green) when one stands out; anything mounted or matching a known boot/secure/virtual pattern is flagged ⚠ DO NOT SELECT (red). Still double-check size/mountpoint yourself before typing the confirmation — the entire drive is wiped."
+                                           TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="0,6,0,0"/>
+                            </StackPanel>
+
+                            <!-- security: pubkey input -->
+                            <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=security}" Margin="0,0,0,14">
+                                <TextBlock Text="Public key for the new 'cloudkey' admin user" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                                <TextBox Text="{Binding PubKeyInput, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="False" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                <TextBlock Text="Defaults to bootstrapping from whatever key authenticated this session if left blank at run time on the device -- supplying one here is recommended."
+                                           TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12"/>
+                            </StackPanel>
+
+                            <!-- Live preview: what Apply would actually remove on THIS device, right on the
+                                 confirmation screen - informed consent from real data, not just prose.
+                                 Purge-specific only; format-volume's confirmation is the device path itself. -->
+                            <Border Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=purge}"
+                                    Background="{DynamicResource BgPanelAlt}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1"
+                                    CornerRadius="4" Padding="10" Margin="0,0,0,10">
+                                <TextBlock Text="{Binding PurgeLivePreview}" TextWrapping="Wrap" FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="12"/>
+                            </Border>
+
+                            <!-- Danger confirmation -->
+                            <StackPanel Visibility="{Binding IsDangerStep, Converter={StaticResource BoolToVisibility}}" Margin="0,0,0,14">
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,6" FontStyle="Italic" Foreground="{DynamicResource TextSecondary}"
+                                           Text="Select a target drive above first -- the confirmation phrase is its device path."
+                                           Visibility="{Binding RequiredConfirmationText, Converter={StaticResource StringEmptyToVisibility}}"/>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
+                                           Visibility="{Binding RequiredConfirmationText, Converter={StaticResource StringHasValueToVisibility}}">
+                                    <Run Text="Type " FontWeight="Normal"/>
+                                    <Run Text="{Binding RequiredConfirmationText, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource DangerRed}"/>
+                                    <Run Text=" to enable Apply." FontWeight="Normal"/>
+                                </TextBlock>
+                                <TextBox Text="{Binding ConfirmationInput, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+
+                            <!-- Batch progress: "Batch N of 5" while a real purge Apply is streaming,
+                                 derived purely from watching phase1-purge.sh's own existing output
+                                 markers: see MainViewModel.PurgeBatchProgress. Empty (and hidden) the
+                                 rest of the time, including throughout Simulate. -->
+                            <Border Visibility="{Binding PurgeBatchProgress, Converter={StaticResource StringHasValueToVisibility}}"
+                                    Background="{DynamicResource BgPanelAlt}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1"
+                                    CornerRadius="4" Padding="8,6" Margin="0,0,0,10">
+                                <TextBlock FontWeight="Bold" Text="{Binding PurgeBatchProgress, StringFormat='Purging: {0}'}"/>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Simulate (safe preview)" Margin="0,0,10,0" Command="{Binding SimulateCommand}"
+                                        Visibility="{Binding SelectedStep.SupportsSimulate, Converter={StaticResource BoolToVisibility}}"/>
+                                <Button Content="Apply" Command="{Binding ApplyCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsDangerStep}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerRed}"/>
+                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Skip (optional)" Margin="10,0,0,0" Command="{Binding SkipCommand}"
+                                        Visibility="{Binding SelectedStep.IsOptional, Converter={StaticResource BoolToVisibility}}"/>
+                            </StackPanel>
+
+                            <Border Margin="0,14,0,0" CornerRadius="4" Padding="12,10"
+                                    Background="{Binding OutcomeVerdict, Converter={StaticResource OutcomeVerdictToBrush}}"
+                                    Visibility="{Binding OutcomeVerdict, Converter={StaticResource NullToVisibility}}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding OutcomeVerdict, Converter={StaticResource OutcomeVerdictToLabel}}" FontWeight="Bold" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{Binding OutcomeReason}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{Binding LastScriptInfo}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="11" Margin="0,10,0,0"
+                                       Visibility="{Binding LastScriptInfo, Converter={StaticResource NullToVisibility}}"/>
+                        </StackPanel>
+
+                        <!-- ===== Extras page ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=extras}">
+                            <TextBlock Text="General" FontWeight="Bold" FontSize="15" Margin="0,0,0,8"/>
+                            <ItemsControl ItemsSource="{Binding GeneralExtras}" ItemTemplate="{StaticResource ExtraItemTemplate}"/>
+
+                            <TextBlock Text="Media / Download Server" FontWeight="Bold" FontSize="15" Margin="0,20,0,8"/>
+                            <ItemsControl ItemsSource="{Binding MediaExtras}" ItemTemplate="{StaticResource ExtraItemTemplate}"/>
+
+                            <TextBlock Text="Home Automation" FontWeight="Bold" FontSize="15" Margin="0,20,0,8"/>
+                            <ItemsControl ItemsSource="{Binding HomeAutomationExtras}" ItemTemplate="{StaticResource ExtraItemTemplate}"/>
+
+                            <TextBlock Text="Remote Access / VPN" FontWeight="Bold" FontSize="15" Margin="0,20,0,8"/>
+                            <ItemsControl ItemsSource="{Binding RemoteExtras}" ItemTemplate="{StaticResource ExtraItemTemplate}"/>
+
+                            <TextBlock Text="Backup" FontWeight="Bold" FontSize="15" Margin="0,20,0,8"/>
+                            <ItemsControl ItemsSource="{Binding BackupExtras}" ItemTemplate="{StaticResource ExtraItemTemplate}"/>
+                        </StackPanel>
+
+                        <!-- ===== Finish page ===== -->
+                        <StackPanel Visibility="{Binding SelectedStep.Id, Converter={StaticResource StringEqualsToVisibility}, ConverterParameter=finish}">
+                            <TextBlock Text="Summary" FontWeight="Bold" FontSize="15" Margin="0,0,0,8"/>
+                            <Border Background="{DynamicResource TerminalBg}" CornerRadius="4" Padding="12">
+                                <TextBox Text="{Binding SummaryText, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                         FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="12" TextWrapping="Wrap" AcceptsReturn="True"/>
+                            </Border>
+                            <Button Content="Copy summary" Margin="0,8,0,0" HorizontalAlignment="Left" Command="{Binding CopySummaryCommand}"/>
+
+                            <TextBlock Text="Change / set a password" FontWeight="Bold" FontSize="15" Margin="0,24,0,8"/>
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="0,0,0,10"
+                                       Text="If Harden Access was applied, password login is off right now -- setting a password here temporarily re-enables it, sets the new password, and leaves it enabled until you click Re-lock. If Harden Access was skipped, this just changes the password directly."/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <RadioButton Content="root" Margin="0,0,20,0" VerticalAlignment="Center"
+                                             IsChecked="{Binding PasswordChangeAccount, Converter={StaticResource StringEqualsToBool}, ConverterParameter=root}"/>
+                                <RadioButton Content="cloudkey" VerticalAlignment="Center"
+                                             Visibility="{Binding CloudkeyUserExists, Converter={StaticResource BoolToVisibility}}"
+                                             IsChecked="{Binding PasswordChangeAccount, Converter={StaticResource StringEqualsToBool}, ConverterParameter=cloudkey}"/>
+                            </StackPanel>
+
+                            <TextBlock Text="New password" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                            <PasswordBox x:Name="NewPasswordBox" PasswordChanged="NewPasswordBox_PasswordChanged" Margin="0,0,0,8"/>
+                            <TextBlock Text="Confirm password" Style="{StaticResource MutedText}" Margin="0,0,0,4"/>
+                            <PasswordBox x:Name="ConfirmPasswordBox" PasswordChanged="ConfirmPasswordBox_PasswordChanged" Margin="0,0,0,10"/>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Set Password" Command="{Binding SetPasswordCommand}" Margin="0,0,10,0"/>
+                                <Button Content="Re-lock" Command="{Binding RelockCommand}"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding PasswordChangeStatus}" TextWrapping="Wrap" Margin="0,8,0,0" Style="{StaticResource MutedText}" FontSize="12"/>
+                        </StackPanel>
+
+                        <!-- ===== Back / Next ===== -->
+                        <StackPanel Orientation="Horizontal" Margin="0,24,0,0">
+                            <Button Content="← Back" Margin="0,0,10,0" Command="{Binding BackCommand}"/>
+                            <Button Content="Next →" Command="{Binding NextCommand}"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="{DynamicResource BorderSubtle}"/>
+
+            <!-- ==== Right: terminal ==== -->
+            <Border Grid.Column="4" Background="{DynamicResource TerminalBg}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="{DynamicResource BgPanel}" Padding="12,8" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Terminal" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Padding="8,3" Command="{Binding ToggleShellCommand}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="Drop to shell"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsShellMode}" Value="True">
+                                                <Setter Property="Content" Value="Exit shell"/>
+                                                <Setter Property="Background" Value="{DynamicResource CautionYellow}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- RichTextBox, not the old ItemsControl+TextBlock: TextBlock text can't be
+                         selected/copied at all in WPF, which is exactly the bug this fixes. IsReadOnly
+                         still allows selection + Ctrl+C, just blocks typing; per-line coloring moved
+                         from the TerminalKindToBrush binding to a plain Run.Foreground set in
+                         code-behind (MainWindow.xaml.cs, TerminalLines_CollectionChanged) since a
+                         FlowDocument's Blocks can't be data-bound directly. -->
+                    <RichTextBox x:Name="TerminalRichTextBox" Grid.Row="1" IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                 BorderThickness="0" Background="Transparent" Foreground="{DynamicResource TextPrimary}"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="10,8">
+                        <RichTextBox.Document>
+                            <FlowDocument x:Name="TerminalDocument" PagePadding="0"/>
+                        </RichTextBox.Document>
+                    </RichTextBox>
+
+                    <Border Grid.Row="2" Background="{DynamicResource BgPanel}" Padding="10,8" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,1,0,0"
+                            Visibility="{Binding IsShellMode, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="ShellInputBox" FontFamily="Cascadia Mono, Consolas, Courier New"
+                                         Text="{Binding ShellInputText, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="ShellInputBox_PreviewKeyDown"/>
+                                <Button Grid.Column="1" Content="Send" Margin="8,0,0,0" Command="{Binding SendShellCommand}"/>
+                            </Grid>
+                            <TextBlock Text="Ctrl+C interrupts, Ctrl+D sends EOF, Ctrl+Z suspends -- sent directly to the running command, same as a real terminal."
+                                       Style="{StaticResource MutedText}" FontSize="11" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ============================= First-run disclaimer overlay ============================= -->
+        <Grid Grid.RowSpan="3" Background="#CC000000" Visibility="{Binding ShowDisclaimer, Converter={StaticResource BoolToVisibility}}">
+            <Border Background="{DynamicResource BgPanel}" BorderBrush="{DynamicResource DangerRed}" BorderThickness="1" CornerRadius="6"
+                    MaxWidth="560" Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="Before you start" FontSize="18" FontWeight="Bold" Margin="0,0,0,12"/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,10"
+                               Text="This tool runs real, irreversible commands against a UniFi Cloud Key over SSH: it purges the UniFi application stack, can wipe and reformat a drive, and locks out password login."/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,10"
+                               Text="Doing this takes the device outside Ubiquiti's supported configuration. There is no factory-revert path provided by this tool."/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,18"
+                               Text="Every command this wizard runs is streamed into the terminal pane on the right, in real time, so nothing happens off-screen. Danger-labeled steps require you to type a confirmation phrase before they'll run."/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,10" FontStyle="Italic" Foreground="{DynamicResource TextSecondary}"
+                               Text="This tool is provided for informational and convenience purposes only, as-is, with no warranty of any kind. Use at your own risk. It is not affiliated with or endorsed by Ubiquiti Inc. See Help -&gt; About for references and full details."/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,10" FontStyle="Italic" Foreground="{DynamicResource TextSecondary}"
+                               Text="This app is given away for free. It automates jnovack/cloudkey's runbook, licensed under CC BY-NC-SA 4.0 (creativecommons.org/licenses/by-nc-sa/4.0) -- see Help -&gt; About."/>
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,18" FontStyle="Italic" Foreground="{DynamicResource TextSecondary}"
+                               Text="Inspired by an article on FullDuplexTech.com about converting this hardware (fullduplextech.com/turn-unifi-cloud-key-gen-2-into-a-headless-linux-server)."/>
+                    <Button Content="I understand, continue" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Command="{Binding AcceptDisclaimerCommand}"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

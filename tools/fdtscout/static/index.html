@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FDT.Scout</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">FDT.Scout <span class="muted">— CloudKey web console</span></div>
+    <div class="topbar-right">
+      <span id="whoami" class="muted"></span>
+      <button id="logoutBtn" class="secondary">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="terminal">Terminal</button>
+    <button class="tab" data-tab="health">Health</button>
+    <button class="tab" data-tab="monitoring">Monitoring</button>
+    <button class="tab" data-tab="apps">Apps</button>
+    <button class="tab" data-tab="docker">Docker</button>
+    <button class="tab" data-tab="users">Users</button>
+    <button class="tab" data-tab="certs">Certificates</button>
+    <button class="tab" data-tab="lcd">Front Panel</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="about">About</button>
+  </nav>
+
+  <main>
+    <section id="panel-terminal" class="panel active">
+      <p class="muted">A real interactive shell (PTY) -- Ctrl+C/Ctrl+D/job control all work natively, same as SSH. Not a full terminal emulator: colors/cursor-positioning escape sequences are stripped for readability, plain text only.</p>
+      <div class="term-wrap">
+        <pre id="termOutput" class="term-output" tabindex="0"></pre>
+      </div>
+      <div class="term-input-row">
+        <input type="text" id="termInput" placeholder="Type a command and press Enter&hellip;" autocomplete="off" disabled>
+        <button id="termCtrlC" class="secondary" disabled>Ctrl+C</button>
+        <button id="termCtrlD" class="secondary" disabled>Ctrl+D</button>
+      </div>
+    </section>
+
+    <section id="panel-health" class="panel">
+      <h3 style="margin-top:0">System</h3>
+      <div id="sysSpecs" class="info-block"></div>
+
+      <h3 style="margin-top:24px">History</h3>
+      <p class="muted">Sampled every 60 seconds, kept for 7 days.</p>
+      <div class="chart-grid">
+        <div class="chart-card"><h3>CPU %</h3><canvas id="chartCpu" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Memory %</h3><canvas id="chartMem" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Disk (/) %</h3><canvas id="chartDiskRoot" width="600" height="140"></canvas></div>
+        <div class="chart-card" id="volumeCard" style="display:none"><h3>Disk (/volume) %</h3><canvas id="chartDiskVolume" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Network in (KB/s)</h3><canvas id="chartNetRx" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Network out (KB/s)</h3><canvas id="chartNetTx" width="600" height="140"></canvas></div>
+      </div>
+      <button id="refreshMetrics" class="secondary">Refresh</button>
+
+      <h3 style="margin-top:24px">Processes</h3>
+      <div id="procSummary" class="info-block" style="font-family:monospace;white-space:pre"></div>
+      <table class="data-table" id="procTable">
+        <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>RSS</th><th>Time</th><th>Command</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px">
+        <input type="checkbox" id="procAutoRefresh" checked style="width:auto"> Auto-refresh every 3s
+      </label>
+      <button id="refreshProcesses" class="secondary" style="margin-left:10px">Refresh now</button>
+
+      <h3 style="margin-top:24px">USB storage</h3>
+      <p class="muted">Read-only browsing/download for now -- no upload, delete, or rename.</p>
+      <table class="data-table" id="usbTable">
+        <thead><tr><th>Device</th><th>Size</th><th>Filesystem</th><th>Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="refreshUsb" class="secondary">Refresh</button>
+      <p id="usbMsg" class="msg"></p>
+
+      <div id="fileBrowser" style="display:none;margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div id="fileBrowserPath" class="muted" style="font-family:monospace"></div>
+          <button id="fileBrowserClose" class="secondary">Close</button>
+        </div>
+        <table class="data-table" id="fileBrowserTable">
+          <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-monitoring" class="panel">
+      <h2>Monitoring</h2>
+      <p class="muted">What the device watches on your behalf -- separate from Health, which is how the device itself is doing.</p>
+
+      <h3 style="margin-top:0">Watched hosts</h3>
+      <p class="muted">Ping/TCP/HTTP/DNS checks against hosts you add -- your router, a friend's server, anything you want an eye on.</p>
+      <table class="data-table" id="monitorsTable">
+        <thead><tr><th>Label</th><th>Type</th><th>Target</th><th>Status</th><th>Uptime</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="addMonitorBtn" class="secondary">Add monitor</button>
+      <div id="monitorForm" class="info-block" style="display:none;margin-top:10px">
+        <label>Label<input type="text" id="monLabel" placeholder="e.g. Router"></label>
+        <label>Type
+          <select id="monType" style="padding:8px 10px;background:#262a31;border:1px solid #333844;border-radius:4px;color:#e4e6eb">
+            <option value="ping">Ping</option>
+            <option value="tcp">TCP port</option>
+            <option value="http">HTTP(S)</option>
+            <option value="dns">DNS resolution</option>
+          </select>
+        </label>
+        <label>Target (host, or URL for HTTP)<input type="text" id="monTarget" placeholder="192.168.1.1"></label>
+        <label id="monPortLabel" style="display:none">Port<input type="number" id="monPort" style="width:100px"></label>
+        <label id="monExpectLabel" style="display:none">Expected text (optional)<input type="text" id="monExpect"></label>
+        <label>Check every (seconds)<input type="number" id="monInterval" value="60" style="width:100px"></label>
+        <div style="margin-top:8px">
+          <button id="saveMonitorBtn">Save</button>
+          <button id="cancelMonitorBtn" class="secondary">Cancel</button>
+        </div>
+      </div>
+      <p id="monitorsMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">WAN speed test</h3>
+      <p class="muted">Tests automatically every 6 hours -- documented proof of ISP performance over time, not just "it feels slow."</p>
+      <div class="chart-grid">
+        <div class="chart-card"><h3>Download (Mbps)</h3><canvas id="chartWanDown" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Upload (Mbps)</h3><canvas id="chartWanUp" width="600" height="140"></canvas></div>
+        <div class="chart-card"><h3>Latency (ms)</h3><canvas id="chartWanLatency" width="600" height="140"></canvas></div>
+      </div>
+      <button id="runSpeedTestBtn" class="secondary">Test now (takes ~20-30s)</button>
+      <p id="wanSpeedMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Public IP</h3>
+      <div id="publicIpStatus" class="info-block"></div>
+
+      <h3 style="margin-top:24px">Active scouting</h3>
+      <p class="muted">User-triggered only -- these never run in the background on their own.</p>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px">
+        <div style="flex:1;min-width:280px">
+          <h4 style="margin:0 0 4px">IP range scan</h4>
+          <p class="muted" style="font-size:12px;margin:0 0 8px">Defaults to this device's own local subnet -- or set a start/end address to scan a different range instead (up to 4096 addresses).</p>
+          <form id="scanRangeForm" class="inline-form" style="margin-top:0;margin-bottom:8px">
+            <input type="text" id="scanStartIp" placeholder="Start IP (optional)" style="width:150px">
+            <input type="text" id="scanEndIp" placeholder="End IP (optional)" style="width:150px">
+          </form>
+          <button id="scanSubnetBtn" class="secondary">Scan now</button>
+          <p id="scanSubnetMsg" class="msg"></p>
+          <table class="data-table" id="scanSubnetTable">
+            <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div style="flex:1;min-width:280px">
+          <h4 style="margin:0 0 4px">Open port scan</h4>
+          <p class="muted" style="font-size:12px;margin:0 0 8px">Checks a curated list of common ports on one host.</p>
+          <form id="portScanForm" class="inline-form" style="margin-top:0">
+            <input type="text" id="portScanHost" placeholder="host or IP">
+            <button type="submit">Scan</button>
+          </form>
+          <table class="data-table" id="portScanTable">
+            <thead><tr><th>Port</th><th>Service</th><th>Status</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 style="margin-top:24px">LAN devices (passive)</h3>
+      <p class="muted">Reads what's already known from the ARP table -- not an active scan, always safe to refresh.</p>
+      <button id="refreshLanBtn" class="secondary">Refresh</button>
+      <table class="data-table" id="lanTable">
+        <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 style="margin-top:24px">Wake-on-LAN</h3>
+      <form id="wolForm" class="inline-form">
+        <input type="text" id="wolMac" placeholder="AA:BB:CC:DD:EE:FF">
+        <button type="submit">Send</button>
+      </form>
+      <p id="wolMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Logs</h3>
+      <p class="muted">Aggregated hourly from key services onto real storage, kept 90 days.</p>
+      <button id="refreshLogsBtn" class="secondary">Refresh</button>
+      <table class="data-table" id="logsTable">
+        <thead><tr><th>Unit</th><th>Date</th><th>Size</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <pre id="logViewer" class="term-output" style="display:none;margin-top:10px;max-height:300px"></pre>
+
+      <h3 style="margin-top:24px">Scheduled tasks</h3>
+      <p class="muted">Real cron entries -- keeps running even without this dashboard open.</p>
+      <table class="data-table" id="tasksTable">
+        <thead><tr><th>Name</th><th>Schedule</th><th>Command</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="addTaskBtn" class="secondary">Add task</button>
+      <div id="taskForm" class="info-block" style="display:none;margin-top:10px">
+        <label>Name<input type="text" id="taskName" placeholder="e.g. Nightly backup"></label>
+        <label>Schedule (cron expression)<input type="text" id="taskSchedule" placeholder="0 3 * * *"></label>
+        <label>Command<input type="text" id="taskCommand" placeholder="/root/my-script.sh"></label>
+        <div style="margin-top:8px">
+          <button id="saveTaskBtn">Save</button>
+          <button id="cancelTaskBtn" class="secondary">Cancel</button>
+        </div>
+      </div>
+      <p id="tasksMsg" class="msg"></p>
+    </section>
+
+    <section id="panel-apps" class="panel">
+      <h2>Apps</h2>
+      <p class="muted">Status for everything CloudKey Wizard's Optional Extras can install. This doesn't install anything new -- for something marked "not installed," run its Extra from CloudKey Wizard (the Windows app). For what's already installed, you can start/stop/enable/disable it here.</p>
+      <table class="data-table" id="appsTable">
+        <thead><tr><th>App</th><th>Status</th><th>Detail</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="refreshApps" class="secondary">Refresh</button>
+      <p id="appsMsg" class="msg"></p>
+    </section>
+
+    <section id="panel-docker" class="panel">
+      <h2>Docker</h2>
+      <p class="muted">Run your own containers on this device. This is a general-purpose container manager, not tied to any one app -- Home Assistant's own Docker container (if you installed that Extra) shows up on the Apps tab as usual, unaffected by anything here. Deliberately out of scope: compose stacks, an exec-into-container shell, Docker Hub image search, network/volume management, and bulk operations -- this hardware's RAM and storage are tight enough that a full dashboard would invite more trouble than it's worth.</p>
+
+      <div id="dockerNotInstalled" style="display:none">
+        <p>Docker isn't installed on this device yet.</p>
+        <button id="installDockerBtn">Install Docker</button>
+        <p id="dockerInstallMsg" class="msg"></p>
+      </div>
+
+      <div id="dockerInstalled" style="display:none">
+        <h3>Status</h3>
+        <p id="dockerStatusText" class="muted"></p>
+
+        <h3 style="margin-top:24px">Storage location</h3>
+        <p id="dockerStorageText" class="muted"></p>
+        <button id="moveDockerStorageBtn" class="secondary" style="display:none">Move to /volume</button>
+        <p id="dockerStorageMsg" class="msg"></p>
+
+        <h3 style="margin-top:24px">Containers</h3>
+        <table class="data-table" id="dockerContainersTable">
+          <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Size</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="refreshDocker" class="secondary">Refresh</button>
+        <p id="dockerMsg" class="msg"></p>
+
+        <pre id="dockerLogOutput" class="term-output" style="display:none;margin-top:10px;max-height:320px"></pre>
+
+        <h3 style="margin-top:24px">Run a new container</h3>
+        <form id="dockerRunForm" class="inline-form" style="flex-direction:column;align-items:stretch">
+          <label>Image *<input type="text" id="dockerImage" placeholder="e.g. lscr.io/linuxserver/syncthing" required></label>
+          <label>Name<input type="text" id="dockerName" placeholder="optional, docker will pick one if left blank"></label>
+          <label>Ports<input type="text" id="dockerPorts" placeholder="host:container, comma-separated, e.g. 8384:8384, 22000:22000"></label>
+          <label>Volumes<input type="text" id="dockerVolumes" placeholder="host:container, comma-separated -- e.g. /volume/syncthing:/config"></label>
+          <label>Environment variables<input type="text" id="dockerEnv" placeholder="KEY=value, comma-separated"></label>
+          <label>Restart policy
+            <select id="dockerRestartPolicy">
+              <option value="unless-stopped" selected>unless-stopped</option>
+              <option value="always">always</option>
+              <option value="on-failure">on-failure</option>
+              <option value="no">no</option>
+            </select>
+          </label>
+          <label>Memory limit<input type="text" id="dockerMemLimit" placeholder="optional, e.g. 512m -- leave blank for no limit"></label>
+          <button type="submit">Pull &amp; run</button>
+        </form>
+        <pre id="dockerRunOutput" class="term-output" style="display:none;margin-top:10px;max-height:320px"></pre>
+      </div>
+    </section>
+
+    <section id="panel-users" class="panel">
+      <h2>Accounts</h2>
+      <table class="data-table" id="usersTable">
+        <thead><tr><th>Username</th><th>Created</th><th>Last login</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>Add / update an account</h3>
+      <form id="userForm" class="inline-form">
+        <input type="text" id="newUsername" placeholder="username" required>
+        <input type="password" id="newPassword" placeholder="password (min 8 chars)" required minlength="8">
+        <button type="submit">Save</button>
+      </form>
+      <p id="userMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Recent login activity</h3>
+      <p class="muted">5 failed attempts in a row locks that username out for 15 minutes.</p>
+      <table class="data-table" id="authLogTable">
+        <thead><tr><th>When</th><th>Username</th><th>Result</th><th>From</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="panel-certs" class="panel">
+      <h2>TLS certificate</h2>
+      <div id="certInfo" class="info-block"></div>
+      <div class="cert-actions">
+        <button id="genCertBtn" class="secondary">Generate new self-signed certificate</button>
+      </div>
+      <h3>Install your own certificate</h3>
+      <p class="muted">Upload a cert (PEM, including any intermediate chain) and its matching private key.</p>
+      <form id="certUploadForm" class="inline-form">
+        <label>Certificate (.pem/.crt)<input type="file" id="certFile" required></label>
+        <label>Private key (.pem/.key)<input type="file" id="keyFile" required></label>
+        <button type="submit">Install</button>
+      </form>
+      <p id="certMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Listening port</h3>
+      <div id="configInfo" class="info-block"></div>
+      <p class="muted">Changing the port restarts this service -- you'll need to reconnect at the new address afterward. Enabling the redirect binds port 80 as well, sending it to whatever HTTPS port is configured.</p>
+      <form id="configForm" class="inline-form">
+        <label>HTTPS port<input type="text" id="httpsPort" style="width:80px" required></label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="redirectHttp" style="width:auto"> Redirect port 80 to HTTPS</label>
+        <button type="submit">Apply &amp; restart</button>
+      </form>
+      <p id="configMsg" class="msg"></p>
+    </section>
+
+    <section id="panel-lcd" class="panel">
+      <h2>Front panel display</h2>
+      <p class="muted">Cycles through your own screens of live info -- hostname, IP, time, CPU/RAM/disk, or plain text. To change the hostname itself (and DNS/NTP/IP), see the Settings tab.</p>
+
+      <label style="display:inline-flex;align-items:center;gap:6px">
+        <input type="checkbox" id="displayEnabled" style="width:auto"> Display on
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin-left:18px">
+        Cycle every
+        <input type="number" id="displayCycleSeconds" min="1" style="width:60px" value="10">
+        seconds
+      </label>
+
+      <h3 style="margin-top:18px">Preview</h3>
+      <p class="muted">Approximate -- the real panel is a small monochrome display; this is a same-aspect-ratio stand-in using live values.</p>
+      <div id="screenPreviews" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px"></div>
+
+      <h3 style="margin-top:18px">Screens</h3>
+      <p class="muted">Up to 4 lines per screen -- that's roughly what the physical display can show legibly.</p>
+      <div id="screensEditor"></div>
+      <button id="addScreenBtn" class="secondary" style="margin-top:8px">Add screen</button>
+      <div style="margin-top:14px">
+        <button id="saveDisplayBtn">Save</button>
+      </div>
+      <p id="displayMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Diagnostics</h3>
+      <div id="lcdStatus" class="info-block"></div>
+      <p id="lcdMsg" class="msg"></p>
+    </section>
+
+    <section id="panel-settings" class="panel">
+      <h2>Settings</h2>
+      <p class="muted">System identity and network settings -- hostname, IP/DHCP, DNS, NTP.</p>
+
+      <h3>Hostname</h3>
+      <p class="muted">Also what shows on the front panel's Hostname widget, if you have one.</p>
+      <form id="hostnameForm" class="inline-form">
+        <input type="text" id="newHostname" placeholder="new hostname">
+        <button type="submit">Apply</button>
+      </form>
+      <p id="hostnameMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">IP address</h3>
+      <div id="netStatus" class="info-block"></div>
+      <p class="muted">A changed IP is provisional for 5 minutes -- if you don't confirm it (a splash appears once you can reach the device at its new address), it automatically reverts to what it was before. A wrong gateway/subnet can still make the device briefly unreachable during that window; that's expected, not a sign something's broken.</p>
+      <form id="netForm" class="inline-form">
+        <label>Mode
+          <select id="netMode" style="padding:8px 10px;background:#262a31;border:1px solid #333844;border-radius:4px;color:#e4e6eb">
+            <option value="dhcp">DHCP</option>
+            <option value="static">Static</option>
+          </select>
+        </label>
+        <label id="netAddressLabel">Address (CIDR)<input type="text" id="netAddress" placeholder="192.168.1.50/24"></label>
+        <label id="netGatewayLabel">Gateway<input type="text" id="netGateway" placeholder="192.168.1.1"></label>
+        <button type="submit">Apply</button>
+      </form>
+      <p id="netMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">DNS</h3>
+      <div id="dnsStatus" class="info-block"></div>
+      <p class="muted">Applied immediately, no confirmation window -- a bad DNS server affects this device's own outbound lookups, but not your ability to reach this console by IP (that's your browser's own DNS, not the device's).</p>
+      <form id="dnsForm" class="inline-form">
+        <label>DNS servers (space-separated)<input type="text" id="dnsServers" placeholder="1.1.1.1 8.8.8.8" style="width:260px"></label>
+        <button type="submit">Apply</button>
+      </form>
+      <p id="dnsMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">NTP (time sync)</h3>
+      <div id="ntpStatus" class="info-block"></div>
+      <form id="ntpForm" class="inline-form">
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="ntpEnabled" style="width:auto"> Enabled</label>
+        <label>NTP servers (space-separated, optional)<input type="text" id="ntpServers" placeholder="leave blank for defaults" style="width:260px"></label>
+        <button type="submit">Apply</button>
+      </form>
+      <p id="ntpMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Timezone</h3>
+      <p class="muted">Affects log timestamps and cron/scheduled-task timing on this device -- not NTP (that's what keeps the clock accurate; this is what zone it's displayed in).</p>
+      <form id="timezoneForm" class="inline-form">
+        <label>Timezone
+          <select id="timezoneSelect" style="padding:8px 10px;background:#262a31;border:1px solid #333844;border-radius:4px;color:#e4e6eb;min-width:220px"></select>
+        </label>
+        <button type="submit">Apply</button>
+      </form>
+      <p id="timezoneMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Pushbullet</h3>
+      <p class="muted">Proactive alerts, plus a two-way callsign command channel -- text this device's callsign (e.g. "SCOUT001 status") from your Pushbullet app and it replies. The API token comes from Pushbullet's own Settings &rarr; Account &rarr; Access Tokens page -- never your Pushbullet login.</p>
+      <form id="pushbulletForm" class="inline-form">
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="pbEnabled" style="width:auto"> Enabled</label>
+        <label>Access token<input type="password" id="pbToken" placeholder="paste your Pushbullet access token"></label>
+        <label>Callsign<input type="text" id="pbCallsign" placeholder="defaults to hostname"></label>
+      </form>
+      <p class="muted" style="margin-top:10px">Alert on:</p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label style="flex-direction:row;align-items:center;gap:6px;display:inline-flex"><input type="checkbox" id="pbAlertDisk" style="width:auto"> Disk space low</label>
+        <label style="flex-direction:row;align-items:center;gap:6px;display:inline-flex"><input type="checkbox" id="pbAlertService" style="width:auto"> Service down</label>
+        <label style="flex-direction:row;align-items:center;gap:6px;display:inline-flex"><input type="checkbox" id="pbAlertLockout" style="width:auto"> Login lockout</label>
+        <label style="flex-direction:row;align-items:center;gap:6px;display:inline-flex"><input type="checkbox" id="pbAlertIp" style="width:auto"> IP address change</label>
+        <label style="flex-direction:row;align-items:center;gap:6px;display:inline-flex"><input type="checkbox" id="pbAlertDigest" style="width:auto"> Daily digest</label>
+      </div>
+      <button id="savePushbulletBtn" style="margin-top:12px">Save</button>
+      <p id="pushbulletMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Dynamic DNS</h3>
+      <p class="muted">Cloudflare only, for now. Keeps a DNS record pointed at this connection's current public IP.</p>
+      <form id="ddnsForm" class="inline-form">
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="ddnsEnabled" style="width:auto"> Enabled</label>
+        <label>Cloudflare API token<input type="password" id="ddnsToken"></label>
+        <label>Zone ID<input type="text" id="ddnsZone"></label>
+        <label>DNS record ID<input type="text" id="ddnsRecord"></label>
+        <label>Hostname (display only)<input type="text" id="ddnsHostname" placeholder="home.example.com"></label>
+      </form>
+      <button id="saveDdnsBtn" style="margin-top:12px">Save</button>
+      <p id="ddnsMsg" class="msg"></p>
+    </section>
+
+    <section id="panel-about" class="panel">
+      <h2>About FDT.Scout</h2>
+      <div id="aboutVersion" class="info-block"></div>
+      <div id="aboutText" class="info-block" style="margin-top:12px;white-space:pre-wrap"></div>
+      <h3 style="margin-top:20px">Changelog</h3>
+      <div id="aboutChangelog"></div>
+    </section>
+  </main>
+
+  <!-- Shown whenever a network change is pending confirmation -- checked on every page load, not
+       just right after login, so it's impossible to miss regardless of which tab you land on. -->
+  <div id="ipSplash" style="display:none;position:fixed;inset:0;background:#0b0d10ee;z-index:1000;align-items:center;justify-content:center">
+    <div style="background:#1e2126;border:1px solid #333844;border-radius:8px;padding:32px;max-width:420px;text-align:center">
+      <h2 style="margin-top:0">Confirm the new network address</h2>
+      <p id="ipSplashDetail" class="muted"></p>
+      <p>If you can read this, you reached the device at its new address -- click below to keep it.</p>
+      <p style="font-size:28px;font-weight:bold" id="ipSplashCountdown"></p>
+      <button id="ipSplashAccept">Accept IP changes</button>
+      <p class="muted" style="margin-top:12px">Otherwise it reverts to the previous address automatically when the timer runs out.</p>
+    </div>
+  </div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

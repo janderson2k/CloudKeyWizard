@@ -1,0 +1,13 @@
+[Unit]
+Description=FDT.Scout web console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fdtscout
+ExecStart=/opt/fdtscout/fdtscout
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

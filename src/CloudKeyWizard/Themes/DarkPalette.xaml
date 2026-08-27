@@ -1,0 +1,20 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The original (and still default) palette. Values must stay in sync with LightPalette.xaml's
+         key set - every key here must exist there too, or a theme switch leaves some element
+         unstyled. TerminalBg is intentionally the same value in both files: the terminal pane stays
+         dark regardless of app theme (its own text colors, hardcoded in Converters.cs, are
+         calibrated for a dark background, and there's real value in a terminal looking like a
+         terminal either way). -->
+    <SolidColorBrush x:Key="BgWindow" Color="#1B1B1D"/>
+    <SolidColorBrush x:Key="BgPanel" Color="#232326"/>
+    <SolidColorBrush x:Key="BgPanelAlt" Color="#2B2B2F"/>
+    <SolidColorBrush x:Key="BgInput" Color="#2E2E33"/>
+    <SolidColorBrush x:Key="BorderSubtle" Color="#3C3C42"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#EDEDEF"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#9C9CA3"/>
+    <SolidColorBrush x:Key="AccentBlue" Color="#3A8EE6"/>
+    <SolidColorBrush x:Key="DangerRed" Color="#E14B4B"/>
+    <SolidColorBrush x:Key="CautionYellow" Color="#E0B050"/>
+    <SolidColorBrush x:Key="TerminalBg" Color="#0B0B0C"/>
+</ResourceDictionary>

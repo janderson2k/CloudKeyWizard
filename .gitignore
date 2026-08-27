@@ -1,0 +1,11 @@
+bin/
+obj/
+publish/
+publish-v*/
+*.user
+
+# Stray local build artifacts from testing tools/fdtscout directly (go build without -o to a temp
+# path) -- not the real embedded binary, which lives at src/CloudKeyWizard/Scripts/fdtscout/ and IS
+# tracked on purpose (that's the one actually shipped, checked in like any other bundled asset).
+/tools/fdtscout/fdtscout
+/tools/fdtscout/fdtscout-arm64

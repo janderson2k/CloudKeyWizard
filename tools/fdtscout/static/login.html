@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FDT.Scout</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <h1>FDT.Scout</h1>
+    <p class="muted">CloudKey web console</p>
+    <form id="loginForm">
+      <label>Username</label>
+      <input type="text" id="username" autocomplete="username" required autofocus>
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <p id="loginError" class="error" style="display:none"></p>
+    </form>
+  </div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({error: 'login failed'}));
+      errEl.textContent = body.error || 'login failed';
+      errEl.style.display = 'block';
+      return;
+    }
+    window.location.href = '/';
+  } catch (err) {
+    errEl.textContent = 'could not reach the server';
+    errEl.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>
