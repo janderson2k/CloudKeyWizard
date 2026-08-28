@@ -5,8 +5,8 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.1.1"
-	BuildDate = "2026-08-25"
+	Version   = "2.1.2"
+	BuildDate = "2026-08-27"
 )
 
 type ChangelogEntry struct {
@@ -16,6 +16,13 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.1.2",
+		Date:    "2026-08-27",
+		Notes: []string{
+			"Fixed a real bug reported live: proactive Pushbullet alerts (disk space, service down, login lockout, IP change, the daily digest) carried no device identifier at all -- \"Daily digest\" looked identical from every device on the same Pushbullet account, with no way to tell which one sent it. Every alert's title is now tagged with the same callsign the two-way command channel already uses (e.g. \"SCOUT001: Daily digest\"), so it's finally possible to tell devices apart. Command replies were never affected by this -- their title already was the callsign.",
+		},
+	},
 	{
 		Version: "2.1.1",
 		Date:    "2026-08-25",

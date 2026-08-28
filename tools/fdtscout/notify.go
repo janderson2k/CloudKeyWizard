@@ -92,8 +92,15 @@ func notifyAsync(title, body string) {
 	if !cfg.Enabled || cfg.Token == "" {
 		return
 	}
+	// Proactive alerts (unlike command replies, whose title already IS the callsign) had no device
+	// identifier at all -- "Daily digest" / "Disk space low" look identical from every device on the
+	// same Pushbullet account, with no way to tell which one actually sent it. Real report: a user
+	// running this on more than one device couldn't tell them apart. Tag every alert's title with the
+	// same callsign the command channel already uses, so it's the one consistent identifier across
+	// both directions of this integration.
+	taggedTitle := fmt.Sprintf("%s: %s", callsignPrefix(cfg), title)
 	go func() {
-		iden, err := sendPush(cfg, title, body)
+		iden, err := sendPush(cfg, taggedTitle, body)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pushbullet send failed: %v\n", err)
 			return

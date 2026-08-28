@@ -7,13 +7,17 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.12.1";
-    public const string BuildDate = "2026-08-25";
+    public const string Version = "2.13.0";
+    public const string BuildDate = "2026-08-27";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.13.0", "2026-08-27", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.1.2: fixed a real bug where proactive Pushbullet alerts (disk space, service down, login lockout, IP change, the daily digest) carried no device identifier at all -- if you run this on more than one Cloud Key against the same Pushbullet account, every alert looked identical with no way to tell which device sent it. Every alert's title is now tagged with that device's own callsign.",
+        }),
         new("2.12.1", "2026-08-25", new[]
         {
             "Fixed a real inconsistency in the About feature list added last version: WireGuard's line was worded to lead with \"FullDuplexTech,\" but the 27-original/10-jnovack total right below it only works if WireGuard counts as jnovack-sourced (which is the correct call -- the 7 scripts and systemd units that actually do the VPN work are jnovack's, verbatim; only the orchestrator wiring them together is original). Reworded that one line so it matches the total instead of contradicting it.",
