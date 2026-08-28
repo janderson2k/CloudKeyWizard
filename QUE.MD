@@ -1466,3 +1466,52 @@ systemd units that do the actual VPN work are theirs, verbatim; only the orchest
 together is original) -- now the itemized tags and the "27/10" total agree. Build clean, both loose
 Debug and published exe smoke-tested (no `crash.log`). Published as `publish-v46`. CloudKeyWizard now
 2.12.1 (FDT.Scout unchanged at 2.1.1).
+
+### Same session -- repo published to GitHub, first Release, then a real Pushbullet bug fixed
+
+User asked whether to fork jnovack/cloudkey to upload their own code -- explained why that's the
+wrong move (implies CloudKeyWizard is a derivative of jnovack's own project, and a fork inherits
+their CC BY-NC-SA license file, which would bleed onto this project's own original code) and
+recommended a dedicated, separate repo instead. User created
+[`janderson2k/CloudKeyWizard`](https://github.com/janderson2k/CloudKeyWizard) (empty, public, no
+README/gitignore/license template) via the GitHub web UI.
+- **Published**: fixed `.gitignore` gaps first (`publish-v*/` wasn't excluded -- would have committed
+  ~1GB+ of duplicate compiled exes; also excluded two stray leftover Go binaries sitting in
+  `tools/fdtscout/` from earlier build/test sessions, never the real embedded copy). `git init`,
+  staged (139 files, 8.9MB, verified clean via `git status --short` before committing), first commit,
+  pushed via GitHub Desktop (command-line `git push` initially failed on a stale cached credential in
+  Windows Credential Manager that `cmdkey` couldn't clean up programmatically -- GitHub Desktop's own
+  sign-in flow bypassed it entirely, and running `gh auth setup-git` afterward repaired the
+  command-line credential too, so plain `git push` works from the terminal again going forward).
+- **GitHub CLI installed** (`winget install GitHub.cli`) so Releases can be created/managed directly
+  -- authenticated via the device-code browser flow (user completed the actual sign-in themselves,
+  as it must be).
+- **First Release published**: `v2.12.1` with `CloudKeyWizard.exe` attached as a downloadable asset
+  (not committed to git -- Releases are the right home for built binaries), verified byte-count
+  matches the local file exactly. Added a download link to the top of `README.md` pointing at
+  `releases/latest` so it never goes stale across future releases.
+- **Blog content drafted** for a FullDuplexTech.com WordPress post about the app -- full draft
+  delivered in chat (not saved to a file), covering what it does, the Extras ecosystem, credit to
+  jnovack/cloudkey, and the free/non-commercial framing. Not saved anywhere in this repo; if wanted
+  later, ask the user whether they kept/edited it.
+- **Real Pushbullet bug found and fixed**: user reported getting summary/digest notifications from
+  multiple devices with no way to tell them apart (no machine identifier in the message). Traced to
+  `notify.go`: every proactive alert (`notifyDiskFull`, `notifyServiceDown`, `notifyLockout`,
+  `notifyIPChange`, `notifyDigest`) sent a generic title ("Disk space low", "Daily digest", etc.) with
+  zero device identifier -- unlike command *replies*, whose title already IS the callsign, so they
+  were never ambiguous. This is a different bug from the earlier self-reply-loop fix (that one made
+  the device correctly ignore its own messages; this one is about a human being able to tell WHICH
+  device sent a legitimate message) -- user's own proposed fix (quoting/reformatting the callsign in
+  status messages) was explained as unnecessary for the loop problem specifically (already closed via
+  `iden`-tracking, not text pattern matching) but the underlying alert-identification gap they'd
+  actually run into was real and got fixed properly: `notifyAsync` now prefixes every alert title with
+  `callsignPrefix(cfg)` (e.g. "SCOUT001: Daily digest") -- one change point, fixes all 5 alert types at
+  once, doesn't touch the already-correct command-reply path.
+- **Verified**: `go vet`/`go build` clean under the real target, `strings` on the compiled binary
+  confirms `FDT.Scout 2.1.2` and the new changelog text are present, binary re-embedded and confirmed
+  byte-identical via `cmp`. C# build clean, both loose Debug and published exe smoke-tested (no
+  `crash.log`).
+- Committed and pushed via plain `git push` (credential fix from earlier in this session held).
+  Published as `publish-v47` and as GitHub Release
+  [`v2.13.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.13.0) with the exe
+  attached. CloudKeyWizard now 2.13.0, bundled FDT.Scout now 2.1.2.
