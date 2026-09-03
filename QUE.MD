@@ -404,7 +404,8 @@ process, load average, uptime, auto-refreshing every 3s), USB drive mount/unmoun
 | Pushbullet (FDT.Scout) | Proactive alerts (disk space, a monitored service going down, login lockout, IP change, optional daily digest -- each an individually toggleable Settings-tab checkbox) plus a two-way command channel: FDT.Scout polls Pushbullet for pushes starting with its own configurable callsign (defaults to hostname) and replies, silently ignoring everything else -- including its own replies (tracked by Pushbullet `iden`, fixed after a real self-reply-loop bug) and any command it doesn't recognize (no reply at all, not an error message). Read-only queries (`status`/`disk`/`ip`/`uptime`/`apps`/`health`/`ping <host>`) answer immediately; actions (`restart`/`start`/`stop`/`enable`/`disable` an app) are bounded to the same fixed catalog the Apps tab's own start/stop/enable/disable already enforces (never a free-form command) and require a second `<CALLSIGN> CONFIRM` push within 5 minutes before executing -- deliberately designed over 3 rounds of discussion with the user, see the private memory file for the full history | `tools/fdtscout/notify.go`, `pushbullet_listen.go`, `handlers_settings.go`'s Pushbullet handlers |
 | Shared device state | `fdtscout-state.json`, written to the existing SSH audit-trail directory on the device -- both CloudKey Wizard and FDT.Scout read/write it, so Extras' status (installed via either app) stays in sync between them, and a *different* copy of CloudKey Wizard connecting later picks up real state instead of starting blank. Device-authoritative: overrides local `KnownHosts.json` data for the same host when both exist | `Services/DeviceStateStore.cs`, `tools/fdtscout/devicestate.go`, wired into `MainViewModel.ConnectAsync/PersistExtraStatus` |
 | Docker tab (FDT.Scout) | General-purpose container manager, its own top-level tab -- separate from the Apps tab's pre-existing, narrower Docker awareness (`kindDocker` in `apps.go`, still scoped to just Home Assistant's named container, untouched). Install/verify Docker with one click (idempotent `apt-get install docker.io` + `systemctl enable --now` -- deliberately one-way, not a real toggle, since something already using Docker would break if it were "turned off"); full lifecycle control on existing containers (start/stop/pause/restart/remove) with per-container size shown (`docker ps -a --format json`); a run-from-image form (image, name, ports, volumes, env vars, restart policy, optional memory limit) that runs `docker pull` as its own visible step before `docker run`, so a bad image name or network hiccup fails clearly; tailable log viewing (`docker logs --tail`); and an explicit storage-location control -- shows Docker's current data directory (reads `data-root` from `/etc/docker/daemon.json`, falls back to the real documented default) and, when `/volume` is mounted and not already in use, offers to move Docker's data there (`rsync`s the existing tree first, only switches `daemon.json` over and restarts once the copy succeeds, reverts automatically if the daemon fails to come up on the new path). Deliberately out of scope, named rather than silently dropped: compose stacks, exec-into-container shell, Docker Hub image search, network/volume management UI, bulk operations | `tools/fdtscout/docker.go`, `handlers_docker.go`, `static/index.html`'s `panel-docker`, `static/app.js`'s Docker section |
-| CloudKeyWizard.exe About / Changelog | Help menu -> About (version, references incl. jnovack/cloudkey and the original FullDuplexTech.com article, disclaimer) and View Changelog, both a scrollable `TextWindow` (was a plain MessageBox for About, nothing for Changelog before). Version currently 2.11.0 | `Version.cs`, `TextWindow.xaml(.cs)`, `MainWindow.xaml.cs::AboutMenuItem_Click/ChangelogMenuItem_Click` |
+| CloudKeyWizard.exe About / Changelog | Help menu -> About (version, references incl. jnovack/cloudkey and the original FullDuplexTech.com article, disclaimer) and View Changelog, both a scrollable `TextWindow` (was a plain MessageBox for About, nothing for Changelog before). Version currently 2.14.0 | `Version.cs`, `TextWindow.xaml(.cs)`, `MainWindow.xaml.cs::AboutMenuItem_Click/ChangelogMenuItem_Click` |
+| FDT.Scout version check + update highlighting | Connecting to an already-set-up device checks the live-installed FDT.Scout version (`fdtscout -version` over SSH) against `AppVersion.BundledFdtScoutVersion` (this build's own embedded copy); a mismatch shows a yellow "Update available" badge on the FDT.Scout Extra, switches its Run button to Update, and states both versions in the detail line. Scoped to FDT.Scout only -- the one Extra with a live-reportable, bundled-tracked version | `ExtraItem.InstalledVersion/UpdateAvailable`, `MainViewModel.CheckFdtScoutVersionAsync`, `tools/fdtscout/main.go`'s `-version` flag |
 | First-run disclaimer | "Before you start" overlay now also carries a plain "use at your own risk, informational purposes only, not affiliated with Ubiquiti" liability line alongside the existing technical-risk warning | `MainWindow.xaml` ~line 468 |
 | Terminal pane copy/paste | Right pane is a read-only `RichTextBox` (was a non-selectable `ItemsControl`+`TextBlock`) -- text can now be selected and copied out with Ctrl+C, same per-line coloring as before | `MainWindow.xaml` right pane, `MainWindow.xaml.cs::TerminalLines_CollectionChanged` |
 | Finish & Summary | Live report (host/model/auth/every step's outcome) + Copy button + password-change utility (unlock → `chpasswd` → re-lock, password never shown in plaintext in the log) | `ViewModels/MainViewModel.cs::BuildSummaryText/SetPasswordAsync/RelockAsync` |
@@ -1515,3 +1516,45 @@ README/gitignore/license template) via the GitHub web UI.
   Published as `publish-v47` and as GitHub Release
   [`v2.13.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.13.0) with the exe
   attached. CloudKeyWizard now 2.13.0, bundled FDT.Scout now 2.1.2.
+
+### Same session -- FDT.Scout version check + "Update available" highlighting on the Extras page
+
+User asked to add a version check for individual components (FDT.Scout specifically) and highlight
+available updates when scanning an already-set-up Cloud Key. Built and shipped same pass.
+- **`fdtscout` gained a `-version` flag** (`tools/fdtscout/main.go`) -- prints the version and exits,
+  checked before `ensureDirs()` so it works even without proper data-dir permissions. This is the
+  actual mechanism: CloudKeyWizard runs `/opt/fdtscout/fdtscout -version` over SSH, one-shot, no
+  HTTP/TLS trust needed, works even if the systemd service isn't currently running. FDT.Scout
+  2.1.2 -> 2.1.3.
+- **`AppVersion.BundledFdtScoutVersion`** (`Version.cs`) -- a plain string constant naming the
+  FDT.Scout version actually embedded in THIS build (`Scripts/fdtscout/fdtscout-arm64`). Deliberately
+  a hand-maintained literal, not auto-derived from the Go source at build time -- documented plainly
+  as something to bump by hand alongside `tools/fdtscout/version.go` whenever that binary changes,
+  same discipline already used for the changelog mirroring between the two version files.
+- **`ExtraItem` gained `InstalledVersion` and `UpdateAvailable`** (`Models/ExtraItem.cs`) -- bindable
+  properties, empty/false until a check actually runs (no "assume outdated" default).
+- **`MainViewModel.CheckFdtScoutVersionAsync`** -- runs right after `RestoreExtrasFromDeviceStateAsync`
+  in the connect flow (exactly the "scanning an already setup Cloud Key" moment), but only when the
+  fdtscout Extra is already marked Done (installed) -- nothing to check on a fresh device, since a
+  fresh install always gets the current bundled version anyway. Best-effort: an older FDT.Scout
+  predating `-version`, or any SSH hiccup, just leaves `InstalledVersion` blank rather than failing
+  the whole connect flow over a version check.
+- **UI** (`MainWindow.xaml`): a yellow "Update available" badge next to the FDT.Scout item's title
+  (bound to `UpdateAvailable`, using the existing `CautionYellow` resource -- same severity-color
+  convention already used elsewhere in the app), the Run button's `Content` switches to "Update" via
+  a `DataTrigger` when applicable, and the detail line shows both versions plainly ("Installed:
+  v2.1.1 -- update available (this Wizard bundles v2.1.3). Re-run to update.").
+- **Scoped to FDT.Scout only, deliberately** -- it's the one Extra with a component that both reports
+  its own version live and has a version this app tracks as "what's bundled." Other Extras (Plex,
+  Sonarr, Docker, etc.) install whatever's current via apt/vendor scripts with no comparable
+  bundled-vs-installed version concept, so extending this pattern to them isn't a mechanical copy --
+  revisit only if a real need for that shows up.
+- **Verified**: `go vet`/`go build` clean under the real target, binary re-embedded and confirmed
+  byte-identical via `cmp`. C# build clean (0 warnings/errors), both loose Debug and published exe
+  smoke-tested (no `crash.log`) -- launch alone would have thrown on a broken XAML binding/trigger,
+  which it didn't. Not live-tested against a real already-converted device with an older FDT.Scout
+  installed (would need one at hand to watch the badge actually appear) -- same standing caveat as
+  everything else in this project.
+- Committed, pushed, published as `publish-v48` and GitHub Release
+  [`v2.14.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.14.0) with the exe
+  attached. CloudKeyWizard now 2.14.0, bundled FDT.Scout now 2.1.3.
