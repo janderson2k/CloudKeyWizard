@@ -1558,3 +1558,66 @@ available updates when scanning an already-set-up Cloud Key. Built and shipped s
 - Committed, pushed, published as `publish-v48` and GitHub Release
   [`v2.14.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.14.0) with the exe
   attached. CloudKeyWizard now 2.14.0, bundled FDT.Scout now 2.1.3.
+
+### Same session -- Tailscale configure-from-GUI + per-monitor Pushbullet notifications
+
+User asked for two things, the second added mid-turn via an interrupt: (1) configure Tailscale
+(not just install it) from FDT.Scout's own GUI, and (2) a "Notify via Pushbullet" option per
+monitor on the Monitoring tab. Both built and shipped same pass.
+
+**Tailscale join/leave from the GUI** -- new Settings-tab section. Install itself was already
+covered by the existing generic Install tab (`installcatalog.go`) and the Apps tab already has
+basic `tailscaled.service` status (`apps.go`'s `kindSystemd` entry); the actual gap was joining a
+tailnet, previously only possible from "Drop to shell" running `tailscale up` by hand (the
+CloudKeyWizard Tailscale Extra's own description says exactly that).
+- **Verified the real CLI against tailscale's own source first**, not guessed (`cmd/tailscale/cli/
+  up.go`, `ipn/ipnstate/ipnstate.go`) -- caught a real naming trap: the actual flag is
+  `--auth-key`, not the more commonly assumed `--authkey`. Confirmed `--login-server` and
+  `--hostname` both genuinely exist on `up` (not just `login`). Also found that `tailscale up
+  --json` prints a clean JSON object (`AuthURL`, a ready-to-display `QR` data URI, `BackendState`,
+  `Error`) the moment it has something to report, instead of needing to regex-scrape the
+  human-readable "To authenticate, visit:" text -- a much more robust integration point.
+- **`tailscale.go`**: `getTailscaleStatus()` (`tailscale status --json`, parsed against the real
+  `ipnstate.Status`/`PeerStatus`/`TailnetStatus` field names); `tailscaleUpWithAuthKey()`
+  (synchronous, completes instantly -- the recommended path in the UI); `tailscaleUpInteractive()`
+  (starts `tailscale up --json` as a background process, reads stdout until the JSON block
+  completes, returns the AuthURL/QR immediately without waiting for the actual login -- same
+  don't-block-on-a-human-approving-in-a-browser pattern already proven working this session for
+  `gh auth login --web`; the process keeps running in the background so the login can still
+  complete once the user approves it); `tailscaleLogout()`.
+- **`handlers_tailscale.go`**: `GET /api/tailscale`, `POST /api/tailscale/join` (branches on
+  whether an auth key was supplied), `POST /api/tailscale/logout`.
+- **UI**: status block (connected/not, tailnet name, this device's DNS name + Tailscale IP), a
+  join form covering both real paths -- auth key (+ optional login-server for self-hosted
+  Headscale, + optional hostname override) or "Join via browser" which displays the approval link
+  and QR code and polls `/api/tailscale` every 5s (capped ~3 minutes) to notice completion -- and
+  a Leave tailnet button.
+- **Verified in the Browser pane** with mocked fetch responses (not just "the page loads"): all
+  three status states (not installed / not connected / connected) render correctly, the full
+  browser-join flow was exercised end-to-end (URL displayed, QR image shown, message set, polling
+  started), and the auth-key form's actual save payload was captured and confirmed correct.
+
+**Per-monitor Pushbullet notifications**: `Monitor` gained `NotifyPushbullet bool` -- a per-host
+opt-in, deliberately NOT gated behind a new global "alert on monitor changes" toggle the way the
+Health-tab alerts are, since most people watching a handful of hosts don't want a push for every
+one. `runOne` fires `notifyMonitorDown`/`notifyMonitorUp` (new wrappers in `notify.go`, same shape
+as the existing `notifyServiceDown` etc.) on the exact up/down transition already tracked by
+`downSince` -- edge-triggered, same discipline as `runServiceWatch`, so an already-down host
+doesn't spam a push every check. Frontend: a checkbox on the add-monitor form, included in the
+save payload, and a 🔔 badge next to a monitor's label in the table when enabled -- verified via
+the Browser pane (mocked save payload confirmed `notifyPushbullet: true` flows through correctly;
+mocked table render confirmed the badge appears only on the flagged monitor).
+
+- **Verified**: `go vet`/`go build` clean under the real target, `strings` on the compiled binary
+  confirms `FDT.Scout 2.2.0` and all three new `/api/tailscale*` routes are actually present.
+  Binary re-embedded and confirmed byte-identical via `cmp`. C# build clean, both loose Debug and
+  published exe smoke-tested (no `crash.log`). `AppVersion.BundledFdtScoutVersion` bumped to match
+  (2.1.3 -> 2.2.0) -- the hand-maintained discipline from the version-check feature two passes ago
+  already caught itself needing this update.
+- **Not live-tested against a real tailnet** -- the interactive browser-login flow specifically
+  (background process + stdout-JSON-scraping) hasn't been watched completing a real approval on
+  actual hardware; same standing caveat as everything else in this project, but worth flagging
+  more than usual given the process-lifecycle complexity of that one path.
+- Committed, pushed, published as `publish-v49` and GitHub Release
+  [`v2.15.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.15.0) with the exe
+  attached. CloudKeyWizard now 2.15.0, bundled FDT.Scout now 2.2.0.
