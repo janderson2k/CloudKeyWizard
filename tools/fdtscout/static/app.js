@@ -33,7 +33,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     if (btn.dataset.tab === 'users') loadUsers();
     if (btn.dataset.tab === 'certs') { loadCertInfo(); loadConfig(); }
     if (btn.dataset.tab === 'lcd') { loadLCDStatus(); loadDisplayConfig(); }
-    if (btn.dataset.tab === 'settings') { loadLCDStatus(); loadNetworkStatus(); loadNTPStatus(); loadDNSStatus(); loadTimezoneStatus(); loadPushbulletSettings(); loadDdnsSettings(); }
+    if (btn.dataset.tab === 'settings') { loadLCDStatus(); loadNetworkStatus(); loadNTPStatus(); loadDNSStatus(); loadTimezoneStatus(); loadPushbulletSettings(); loadDdnsSettings(); loadTailscaleStatus(); }
     if (btn.dataset.tab === 'about') loadAbout();
     if (btn.dataset.tab === 'terminal') connectTerminal();
   });
@@ -1339,7 +1339,8 @@ async function loadMonitors() {
     const statusText = !m.lastResult ? 'no data yet' : (m.lastResult.up ? 'up' : 'DOWN');
     const statusColor = !m.lastResult ? '#8a92a3' : (m.lastResult.up ? '#4caf7d' : '#ff6b6b');
     const uptimeText = m.lastResult ? `${m.uptimePct.toFixed(1)}%` : '';
-    tr.innerHTML = `<td>${escapeHtml(m.label)}</td><td>${escapeHtml(m.type)}</td><td class="muted">${escapeHtml(m.target)}${m.port ? ':' + m.port : ''}</td>
+    const notifyBadge = m.notifyPushbullet ? ' <span title="Notifies via Pushbullet" style="opacity:0.8">🔔</span>' : '';
+    tr.innerHTML = `<td>${escapeHtml(m.label)}${notifyBadge}</td><td>${escapeHtml(m.type)}</td><td class="muted">${escapeHtml(m.target)}${m.port ? ':' + m.port : ''}</td>
       <td style="color:${statusColor}">${statusText}</td><td>${uptimeText}</td><td></td>`;
     const actionCell = tr.lastElementChild;
     const runBtn = document.createElement('button');
@@ -1404,15 +1405,17 @@ document.getElementById('saveMonitorBtn').addEventListener('click', () => {
   const port = parseInt(document.getElementById('monPort').value, 10) || 0;
   const expectedText = document.getElementById('monExpect').value.trim();
   const intervalSecs = parseInt(document.getElementById('monInterval').value, 10) || 60;
+  const notifyPushbullet = document.getElementById('monNotify').checked;
   if (!label || !target) {
     setMsg('monitorsMsg', false, 'Label and target are required.');
     return;
   }
-  const updated = monitorsCache.concat([{ label, type, target, port, expectedText, intervalSecs, enabled: true }]);
+  const updated = monitorsCache.concat([{ label, type, target, port, expectedText, intervalSecs, enabled: true, notifyPushbullet }]);
   saveMonitors(updated).then(() => {
     document.getElementById('monitorForm').style.display = 'none';
     document.getElementById('monLabel').value = '';
     document.getElementById('monTarget').value = '';
+    document.getElementById('monNotify').checked = false;
     setMsg('monitorsMsg', true, 'Saved.');
   });
 });
@@ -1734,6 +1737,159 @@ document.getElementById('saveDdnsBtn').addEventListener('click', async () => {
   });
   const body = await res.json().catch(() => ({}));
   setMsg('ddnsMsg', res.ok, res.ok ? 'Saved.' : (body.error || 'failed'));
+});
+
+// ---- Tailscale ---------------------------------------------------------
+// Joining/leaving a tailnet from the GUI -- install itself is already covered by the Apps/Install
+// tabs, this is specifically the "now actually connect it" step that used to require the terminal.
+let tailscalePollTimer = null;
+
+async function loadTailscaleStatus() {
+  const res = await fetch('/api/tailscale');
+  if (!res.ok) return;
+  const status = await res.json();
+  renderTailscaleStatus(status);
+}
+
+function renderTailscaleStatus(status) {
+  const el = document.getElementById('tailscaleStatus');
+  const joinForm = document.getElementById('tailscaleJoinForm');
+  const loggedInBlock = document.getElementById('tailscaleLoggedInBlock');
+
+  if (!status.installed) {
+    el.innerHTML = `<div class="muted">Not installed.</div>`;
+    joinForm.style.display = 'none';
+    loggedInBlock.style.display = 'none';
+    return;
+  }
+  if (status.loggedIn) {
+    el.innerHTML = `
+      <div>Status: <strong style="color:#4caf7d">Connected</strong></div>
+      <div>Tailnet: ${escapeHtml(status.tailnetName || '(unknown)')}</div>
+      <div>This device: ${escapeHtml(status.dnsName || '(unknown)')} -- ${escapeHtml(status.tailscaleIp || '')}</div>
+    `;
+    joinForm.style.display = 'none';
+    loggedInBlock.style.display = '';
+    stopTailscalePoll();
+  } else {
+    el.innerHTML = `<div>Status: <strong style="color:#e0b050">Not connected</strong> (${escapeHtml(status.backendState || 'unknown')})</div>`;
+    joinForm.style.display = '';
+    loggedInBlock.style.display = 'none';
+  }
+}
+
+function stopTailscalePoll() {
+  if (tailscalePollTimer) {
+    clearInterval(tailscalePollTimer);
+    tailscalePollTimer = null;
+  }
+}
+
+// After starting a browser-based join, poll for up to ~3 minutes to notice when the user finishes
+// approving it in their own browser -- there's no push notification for this, only polling.
+function startTailscalePoll() {
+  stopTailscalePoll();
+  let attempts = 0;
+  tailscalePollTimer = setInterval(async () => {
+    attempts++;
+    const res = await fetch('/api/tailscale');
+    if (res.ok) {
+      const status = await res.json();
+      if (status.loggedIn) {
+        document.getElementById('tailscaleAuthUrlBlock').style.display = 'none';
+        setMsg('tailscaleMsg', true, 'Connected.');
+        renderTailscaleStatus(status);
+        return; // renderTailscaleStatus already calls stopTailscalePoll() once loggedIn is true
+      }
+    }
+    if (attempts >= 36) stopTailscalePoll(); // ~3 minutes at 5s intervals -- give up quietly, not an error
+  }, 5000);
+}
+
+document.getElementById('tailscaleAuthKeyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const authKey = document.getElementById('tsAuthKey').value.trim();
+  const loginServer = document.getElementById('tsLoginServer').value.trim();
+  const hostname = document.getElementById('tsHostname').value.trim();
+  if (!authKey) {
+    setMsg('tailscaleMsg', false, 'Auth key is required for this option -- or use "Join via browser" instead.');
+    return;
+  }
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Joining...';
+  try {
+    const res = await fetch('/api/tailscale/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authKey, loginServer, hostname }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      document.getElementById('tsAuthKey').value = '';
+      setMsg('tailscaleMsg', true, 'Joined.');
+      loadTailscaleStatus();
+    } else {
+      setMsg('tailscaleMsg', false, body.error || 'failed');
+    }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Join with auth key';
+  }
+});
+
+document.getElementById('tsJoinBrowserBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('tsJoinBrowserBtn');
+  const loginServer = document.getElementById('tsLoginServer').value.trim();
+  const hostname = document.getElementById('tsHostname').value.trim();
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  try {
+    const res = await fetch('/api/tailscale/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authKey: '', loginServer, hostname }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMsg('tailscaleMsg', false, body.error || 'failed');
+      return;
+    }
+    if (!body.authUrl) {
+      // No URL came back -- already connected (tailscaleUpInteractive's own "already Running" case).
+      setMsg('tailscaleMsg', true, 'Already connected.');
+      loadTailscaleStatus();
+      return;
+    }
+    const urlBlock = document.getElementById('tailscaleAuthUrlBlock');
+    const link = document.getElementById('tailscaleAuthUrlLink');
+    const qr = document.getElementById('tailscaleQr');
+    link.href = body.authUrl;
+    link.textContent = body.authUrl;
+    if (body.qr) {
+      qr.src = body.qr;
+      qr.style.display = '';
+    } else {
+      qr.style.display = 'none';
+    }
+    urlBlock.style.display = '';
+    setMsg('tailscaleMsg', true, 'Waiting for you to approve this in a browser...');
+    startTailscalePoll();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Join via browser (no key)';
+  }
+});
+
+document.getElementById('tsLogoutBtn').addEventListener('click', async () => {
+  if (!confirm('Leave this tailnet? You\'ll need to join again (auth key or browser) to reconnect.')) return;
+  const btn = document.getElementById('tsLogoutBtn');
+  btn.disabled = true;
+  const res = await fetch('/api/tailscale/logout', { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  btn.disabled = false;
+  setMsg('tailscaleLogoutMsg', res.ok, res.ok ? 'Left the tailnet.' : (body.error || 'failed'));
+  if (res.ok) loadTailscaleStatus();
 });
 
 // ---- Initial load ------------------------------------------------------

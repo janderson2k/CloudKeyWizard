@@ -31,6 +31,13 @@ type Monitor struct {
 	ExpectedText string      `json:"expectedText,omitempty"` // http only, optional
 	IntervalSecs int         `json:"intervalSecs"`
 	Enabled      bool        `json:"enabled"`
+
+	// Per-monitor opt-in -- most users watching a handful of hosts don't want a push for every one
+	// of them, so this isn't gated behind a single global "alert on monitor changes" switch the way
+	// the Health-tab alerts are; each monitor decides for itself. Still fully subject to Pushbullet
+	// being enabled/configured at all (notifyAsync's own gate) -- checking this with no token set
+	// just does nothing, same as every other alert type.
+	NotifyPushbullet bool `json:"notifyPushbullet"`
 }
 
 type MonitorResult struct {
@@ -253,6 +260,17 @@ func (e *MonitorEngine) runOne(mon Monitor) {
 		delete(e.downSince, mon.ID)
 	}
 	e.mu.Unlock()
+
+	// Edge-triggered, same discipline as runServiceWatch's own notifyServiceDown -- fires once per
+	// transition, not once per poll, so a monitor that's simply been down for a while (or never up
+	// in the first place) doesn't spam a push every cycle.
+	if mon.NotifyPushbullet {
+		if !result.Up && !wasDown {
+			notifyMonitorDown(mon.Label, mon.Target, result.Detail)
+		} else if result.Up && wasDown {
+			notifyMonitorUp(mon.Label, mon.Target)
+		}
+	}
 }
 
 func checkMonitor(mon Monitor) MonitorResult {

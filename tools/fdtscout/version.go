@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.1.3"
+	Version   = "2.2.0"
 	BuildDate = "2026-08-28"
 )
 
@@ -16,6 +16,14 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.2.0",
+		Date:    "2026-08-28",
+		Notes: []string{
+			"New: join a tailnet right from the Settings tab -- previously only possible from the terminal. Two ways in: an auth key (from Tailscale's own admin console, or a self-hosted Headscale server) joins instantly with no browser step, or \"Join via browser\" starts the normal interactive login and shows the approval link plus a scannable QR code, auto-detecting once you finish. A \"Leave tailnet\" button is there too. Installing Tailscale itself is still done from the Apps tab -- this is specifically the configure-it-afterward step.",
+			"Monitoring tab: each watched host can now opt into a Pushbullet notification when it goes down or recovers, independent of the account-wide alert toggles on the Health tab -- edge-triggered, so a host that's simply been down for a while doesn't spam a push every check.",
+		},
+	},
 	{
 		Version: "2.1.3",
 		Date:    "2026-08-28",

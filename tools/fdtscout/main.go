@@ -214,6 +214,12 @@ func runServer(users *UserStore) {
 	mux.HandleFunc("GET /api/ddns", requireAuth(sessions, true, handleDDNSStatus))
 	mux.HandleFunc("POST /api/ddns", requireAuth(sessions, true, handleDDNSUpdate))
 
+	// Tailscale: joining/leaving a tailnet from the GUI (install itself already covered by the
+	// existing Apps/Install tabs).
+	mux.HandleFunc("GET /api/tailscale", requireAuth(sessions, true, handleTailscaleStatus))
+	mux.HandleFunc("POST /api/tailscale/join", requireAuth(sessions, true, handleTailscaleJoin))
+	mux.HandleFunc("POST /api/tailscale/logout", requireAuth(sessions, true, handleTailscaleLogout))
+
 	// Active scouting: IP range scan + port scan, both user-triggered only, never scheduled.
 	mux.HandleFunc("GET /api/scan/subnet", requireAuth(sessions, true, handleScanSubnet))
 	mux.HandleFunc("POST /api/scan/ports", requireAuth(sessions, true, handleScanPorts))

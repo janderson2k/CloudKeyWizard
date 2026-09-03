@@ -139,6 +139,18 @@ func notifyIPChange(oldIP, newIP string) {
 	notifyAsync("Public IP changed", fmt.Sprintf("%s -> %s", oldIP, newIP))
 }
 
+func notifyMonitorDown(label, target, detail string) {
+	body := fmt.Sprintf("%s (%s) stopped responding.", label, target)
+	if detail != "" {
+		body += " " + detail
+	}
+	notifyAsync("Monitor down", body)
+}
+
+func notifyMonitorUp(label, target string) {
+	notifyAsync("Monitor recovered", fmt.Sprintf("%s (%s) is responding again.", label, target))
+}
+
 func notifyDigest(metrics *MetricsCollector) {
 	history := metrics.History()
 	if len(history) == 0 {

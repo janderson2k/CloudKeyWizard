@@ -114,6 +114,7 @@
         <label id="monPortLabel" style="display:none">Port<input type="number" id="monPort" style="width:100px"></label>
         <label id="monExpectLabel" style="display:none">Expected text (optional)<input type="text" id="monExpect"></label>
         <label>Check every (seconds)<input type="number" id="monInterval" value="60" style="width:100px"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="monNotify" style="width:auto"> Notify via Pushbullet when this goes down/recovers</label>
         <div style="margin-top:8px">
           <button id="saveMonitorBtn">Save</button>
           <button id="cancelMonitorBtn" class="secondary">Cancel</button>
@@ -434,6 +435,33 @@
       </form>
       <button id="saveDdnsBtn" style="margin-top:12px">Save</button>
       <p id="ddnsMsg" class="msg"></p>
+
+      <h3 style="margin-top:24px">Tailscale</h3>
+      <p class="muted">Not installed? Install it first from the Apps tab -- this section is for joining a tailnet once it's on the device, previously only possible from the terminal.</p>
+      <div id="tailscaleStatus" class="info-block"></div>
+
+      <div id="tailscaleJoinForm" style="display:none;margin-top:10px">
+        <p class="muted">Two ways to join -- pick one. An auth key completes instantly with no extra step; the browser option is the normal way most people join and doesn't need a key, but takes a moment to approve.</p>
+        <form id="tailscaleAuthKeyForm" class="inline-form">
+          <label>Auth key (from your tailnet's admin console)<input type="password" id="tsAuthKey" placeholder="tskey-auth-..."></label>
+          <label>Login server (optional -- self-hosted Headscale only)<input type="text" id="tsLoginServer" placeholder="leave blank for Tailscale's own coordination service"></label>
+          <label>Hostname on the tailnet (optional)<input type="text" id="tsHostname" placeholder="leave blank to use this device's own hostname"></label>
+          <button type="submit">Join with auth key</button>
+        </form>
+        <button id="tsJoinBrowserBtn" class="secondary" style="margin-top:10px">Join via browser (no key)</button>
+        <p id="tailscaleMsg" class="msg"></p>
+        <div id="tailscaleAuthUrlBlock" class="info-block" style="display:none;margin-top:10px">
+          <p>Open this on any device to approve:</p>
+          <p><a id="tailscaleAuthUrlLink" href="#" target="_blank" rel="noopener"></a></p>
+          <img id="tailscaleQr" style="display:none;margin-top:8px;max-width:180px" alt="Scan to approve"/>
+          <p class="muted" style="margin-top:8px">Waiting for approval -- this checks automatically every few seconds.</p>
+        </div>
+      </div>
+
+      <div id="tailscaleLoggedInBlock" style="display:none;margin-top:10px">
+        <button id="tsLogoutBtn" class="secondary">Leave tailnet</button>
+        <p id="tailscaleLogoutMsg" class="msg"></p>
+      </div>
     </section>
 
     <section id="panel-about" class="panel">

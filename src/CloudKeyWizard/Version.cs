@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.14.0";
+    public const string Version = "2.15.0";
     public const string BuildDate = "2026-08-28";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.1.3";
+    public const string BundledFdtScoutVersion = "2.2.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.15.0", "2026-08-28", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.2.0: you can now join a tailnet right from its Settings tab -- an auth key joins instantly, or \"Join via browser\" shows an approval link and QR code and auto-detects when you finish, with a Leave tailnet button too. Installing Tailscale itself is still done from the Apps tab; this is the configure-it-afterward step that previously needed the terminal. Also: each watched host on the Monitoring tab can now opt into its own Pushbullet notification when it goes down or recovers.",
+        }),
         new("2.14.0", "2026-08-28", new[]
         {
             "Extras: connecting to an already-set-up device now checks the live-installed FDT.Scout version against what this Wizard build actually bundles -- a yellow \"Update available\" badge appears next to its title, its Run button changes to Update, and the detail line shows both versions, so it's finally visible when re-running that Extra would install something newer instead of silently reinstalling the same version. Bundled FDT.Scout upgraded to 2.1.3, which adds the -version flag this check needs.",
