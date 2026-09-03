@@ -7,13 +7,27 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.13.0";
-    public const string BuildDate = "2026-08-27";
+    public const string Version = "2.14.0";
+    public const string BuildDate = "2026-08-28";
+
+    /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
+    /// fdtscout-arm64) -- must be bumped by hand alongside tools/fdtscout/version.go's own Version
+    /// const whenever that binary is rebuilt and re-embedded. Nothing enforces this automatically;
+    /// it's a plain string literal precisely so a mismatch is a copy-paste bug, not a build failure
+    /// that would block shipping an otherwise-unrelated fix. Used by MainViewModel's live
+    /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
+    /// over SSH) to tell the operator whether re-running that Extra would actually install
+    /// something newer.</summary>
+    public const string BundledFdtScoutVersion = "2.1.3";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.14.0", "2026-08-28", new[]
+        {
+            "Extras: connecting to an already-set-up device now checks the live-installed FDT.Scout version against what this Wizard build actually bundles -- a yellow \"Update available\" badge appears next to its title, its Run button changes to Update, and the detail line shows both versions, so it's finally visible when re-running that Extra would install something newer instead of silently reinstalling the same version. Bundled FDT.Scout upgraded to 2.1.3, which adds the -version flag this check needs.",
+        }),
         new("2.13.0", "2026-08-27", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.1.2: fixed a real bug where proactive Pushbullet alerts (disk space, service down, login lockout, IP change, the daily digest) carried no device identifier at all -- if you run this on more than one Cloud Key against the same Pushbullet account, every alert looked identical with no way to tell which device sent it. Every alert's title is now tagged with that device's own callsign.",

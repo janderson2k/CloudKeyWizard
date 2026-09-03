@@ -372,6 +372,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             RememberCurrentHost(); // now that DetectedModel is known
             RestoreExtrasFromKnownHost();
             await RestoreExtrasFromDeviceStateAsync(); // device-authoritative -- overrides the above if present
+            await CheckFdtScoutVersionAsync();
         }
         catch (Exception ex)
         {
@@ -1110,6 +1111,45 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         AddTerminalLine(new TerminalLine { Kind = TerminalLineKind.AppInfo, Text = $"Loaded prior state from the device itself (last updated by {state.LastUpdatedBy})." });
         PersistExtraStatus(null); // re-sync local KnownHosts from the now-authoritative in-memory state
+    }
+
+    /// <summary>Queries the live version of an already-installed FDT.Scout directly from the device
+    /// (`fdtscout -version` over SSH -- no HTTP/TLS trust needed, works even if the systemd service
+    /// isn't currently running) and compares it against AppVersion.BundledFdtScoutVersion, the
+    /// version embedded in THIS build of CloudKeyWizard. Sets UpdateAvailable so the Extras page can
+    /// highlight it -- the actual point of checking on connect, not just informational. Only runs
+    /// when the fdtscout Extra is already marked Done (installed) -- nothing to check otherwise, and
+    /// a fresh install always gets the current bundled version anyway. Best-effort: an older FDT.Scout
+    /// build with no -version flag, or any SSH hiccup, just leaves InstalledVersion blank rather than
+    /// failing the whole connect flow over a version check.</summary>
+    private async Task CheckFdtScoutVersionAsync()
+    {
+        var extra = GeneralExtras.FirstOrDefault(e => e.Id == "fdtscout");
+        if (extra is null || extra.Status != StepStatus.Done) return;
+
+        try
+        {
+            var (exitCode, stdOut, _) = await _ssh.RunSimpleAsync(
+                "/opt/fdtscout/fdtscout -version 2>/dev/null", displayOverride: "(checking installed FDT.Scout version)");
+            var installed = stdOut.Trim();
+            if (exitCode != 0 || installed.Length == 0) return; // older binary predates -version, or SSH hiccup -- not an error state, just unknown
+
+            extra.InstalledVersion = installed;
+            extra.UpdateAvailable = installed != AppVersion.BundledFdtScoutVersion;
+            if (extra.UpdateAvailable)
+            {
+                extra.Detail = $"Installed: v{installed} -- update available (this Wizard bundles v{AppVersion.BundledFdtScoutVersion}). Re-run to update.";
+                AddTerminalLine(new TerminalLine { Kind = TerminalLineKind.AppInfo, Text = $"FDT.Scout on this device is v{installed}; this Wizard bundles v{AppVersion.BundledFdtScoutVersion} -- an update is available." });
+            }
+            else
+            {
+                extra.Detail = $"Installed: v{installed} (up to date).";
+            }
+        }
+        catch
+        {
+            // Best-effort, as documented above -- a failed version check shouldn't interrupt connect.
+        }
     }
 
     private void PersistExtraStatus(ExtraItem? item)

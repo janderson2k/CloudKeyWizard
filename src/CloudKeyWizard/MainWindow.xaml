@@ -97,6 +97,10 @@
                         <TextBlock Text="{Binding Status, Converter={StaticResource StatusToGlyph}}"
                                    Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}" FontWeight="Bold" Margin="0,0,8,0"/>
                         <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                        <Border Background="{DynamicResource CautionYellow}" CornerRadius="3" Padding="6,1" Margin="8,0,0,0"
+                                VerticalAlignment="Center" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="Update available" FontSize="10" FontWeight="Bold" Foreground="#1a1a1a"/>
+                        </Border>
                     </StackPanel>
                     <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Style="{StaticResource MutedText}" FontSize="12" Margin="20,3,0,8"/>
 
@@ -104,9 +108,20 @@
                         <ItemsControl ItemsSource="{Binding Params}" Margin="0,0,0,8"
                                       ItemTemplateSelector="{StaticResource ExtraParamSelector}"/>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Run" Padding="10,4"
+                            <Button Padding="10,4"
                                     Command="{Binding DataContext.RunExtraCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding}"/>
+                                    CommandParameter="{Binding}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="Run"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding UpdateAvailable}" Value="True">
+                                                <Setter Property="Content" Value="Update"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                             <TextBlock Text="{Binding Detail}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource MutedText}" FontSize="11"/>
                         </StackPanel>
                     </StackPanel>

@@ -35,7 +35,17 @@ var staticFiles embed.FS
 
 func main() {
 	bootstrapAdmin := flag.Bool("bootstrap-admin", false, "create/replace the single admin account from ADMIN_USERNAME/ADMIN_PASSWORD env vars, then exit")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	// Lets CloudKeyWizard check what's actually installed on an already-converted device (over SSH,
+	// one-shot -- no HTTP/TLS trust needed, and works even if the systemd service isn't currently
+	// running) without needing to guess or hit the live web API. Checked before ensureDirs() so this
+	// works even without proper permissions on /opt/fdtscout/data.
+	if *showVersion {
+		fmt.Println(Version)
+		return
+	}
 
 	if err := ensureDirs(); err != nil {
 		log.Fatalf("couldn't create data/config directories: %v", err)

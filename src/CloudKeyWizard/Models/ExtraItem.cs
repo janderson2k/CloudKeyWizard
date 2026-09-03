@@ -129,4 +129,17 @@ public sealed class ExtraItem : ObservableObject
 
     private string _detail = string.Empty;
     public string Detail { get => _detail; set => SetField(ref _detail, value); }
+
+    /// <summary>The version actually installed on the connected device, queried live (currently only
+    /// for "fdtscout" -- the one Extra with a component that reports its own version and that this
+    /// app bundles a specific version of). Empty until checked, or if the check couldn't run (not
+    /// installed, unreachable, older binary with no -version flag).</summary>
+    private string _installedVersion = string.Empty;
+    public string InstalledVersion { get => _installedVersion; set => SetField(ref _installedVersion, value); }
+
+    /// <summary>True when a live-queried InstalledVersion differs from the version bundled in this
+    /// build of CloudKeyWizard -- i.e. re-running this Extra would install something newer. Never
+    /// true before a version check has actually run (no "assume outdated" default).</summary>
+    private bool _updateAvailable;
+    public bool UpdateAvailable { get => _updateAvailable; set => SetField(ref _updateAvailable, value); }
 }

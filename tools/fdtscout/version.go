@@ -5,8 +5,8 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.1.2"
-	BuildDate = "2026-08-27"
+	Version   = "2.1.3"
+	BuildDate = "2026-08-28"
 )
 
 type ChangelogEntry struct {
@@ -16,6 +16,13 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.1.3",
+		Date:    "2026-08-28",
+		Notes: []string{
+			"Added a `-version` flag (prints the version and exits) so CloudKeyWizard can check what's actually installed on an already-converted device over SSH -- no HTTP/TLS trust needed, works even if the service isn't running. Supports CloudKeyWizard's new version-check-and-highlight-updates feature on the Extras page.",
+		},
+	},
 	{
 		Version: "2.1.2",
 		Date:    "2026-08-27",
