@@ -245,6 +245,7 @@ func runServer(users *UserStore) {
 	mux.HandleFunc("GET /api/liferaft/jobs/{id}/runs", requireAuth(sessions, true, handleLifeRaftJobRuns))
 	mux.HandleFunc("GET /api/liferaft/jobs/{id}/files", requireAuth(sessions, true, handleLifeRaftFilesList))
 	mux.HandleFunc("GET /api/liferaft/jobs/{id}/download", requireAuth(sessions, true, handleLifeRaftFileDownload))
+	mux.HandleFunc("POST /api/liferaft/browse/smb", requireAuth(sessions, true, handleLifeRaftSMBBrowse))
 
 	// Active scouting: IP range scan + port scan, both user-triggered only, never scheduled.
 	mux.HandleFunc("GET /api/scan/subnet", requireAuth(sessions, true, handleScanSubnet))

@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.3.0"
+	Version   = "2.4.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,14 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.4.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"LifeRaft: SMB jobs can now be set up by pasting a UNC path (\\\\host\\share\\folder) instead of typing host/share/path separately, and a new \"Browse this share...\" button lets you pick the share and folder interactively (connects read-only with the selected credential, lists shares, click through subfolders, \"Use this folder\") rather than typing a path blind.",
+			"LifeRaft: the schedule field is now a plain-language picker (Daily/Weekly/Monthly, a day, a time) instead of raw cron syntax, translated to cron automatically -- an \"edit raw cron\" link is still there for anything the picker can't express.",
+		},
+	},
 	{
 		Version: "2.3.0",
 		Date:    "2026-09-25",

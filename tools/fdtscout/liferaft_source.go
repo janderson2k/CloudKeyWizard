@@ -69,17 +69,29 @@ type smbSource struct {
 	share   *smb2.Share // never exposed outside this file
 }
 
-func connectSMBSource(job LifeRaftJob, username, domain, password string) (sourceReader, error) {
-	addr := net.JoinHostPort(job.Host, strconv.Itoa(job.Port))
+// connectSMBSession opens a raw SMB session -- NOT yet mounted to any share -- shared by both
+// connectSMBSource (which immediately mounts the job's configured share) and the browse functions
+// below (liferaft_smb_browse.go), which list shares or an arbitrary path the user is auditioning
+// before ever saving a job.
+func connectSMBSession(host string, port int, username, domain, password string) (net.Conn, *smb2.Session, error) {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, sourceConnectTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+		return nil, nil, fmt.Errorf("connecting to %s: %w", addr, err)
 	}
 	d := &smb2.Dialer{Initiator: &smb2.NTLMInitiator{User: username, Password: password, Domain: domain}}
 	session, err := d.Dial(conn)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("SMB session setup failed: %w", err)
+		return nil, nil, fmt.Errorf("SMB session setup failed: %w", err)
+	}
+	return conn, session, nil
+}
+
+func connectSMBSource(job LifeRaftJob, username, domain, password string) (sourceReader, error) {
+	conn, session, err := connectSMBSession(job.Host, job.Port, username, domain, password)
+	if err != nil {
+		return nil, err
 	}
 	share, err := session.Mount(job.Share)
 	if err != nil {

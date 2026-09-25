@@ -331,6 +331,7 @@
               <option value="ftps">FTPS (explicit TLS)</option>
             </select>
           </label>
+          <label id="liferaftJobUncLabel">Paste a UNC path (SMB) to fill in Host/Share/Path automatically<input type="text" id="liferaftJobUnc" placeholder="\\10.0.2.6\Data\#Shares\UserFolders\jason.anderson\#Dev"></label>
           <label>Host<input type="text" id="liferaftJobHost" placeholder="10.0.100.40"></label>
           <label>Port<input type="number" id="liferaftJobPort" placeholder="default: 445 for SMB, 21 for FTP/FTPS"></label>
           <label id="liferaftJobShareLabel">Share name (SMB)<input type="text" id="liferaftJobShare" placeholder="Documents"></label>
@@ -338,7 +339,44 @@
           <label>Credential
             <select id="liferaftJobCredential"></select>
           </label>
-          <label>Schedule (5-field cron)<input type="text" id="liferaftJobSchedule" value="0 3 * * *" placeholder="0 3 * * * = 3am daily"></label>
+          <div id="liferaftBrowseSmbWrap" style="margin:4px 0">
+            <button type="button" id="liferaftBrowseSmbBtn" class="secondary">Browse this share...</button>
+            <p id="liferaftBrowseSmbMsg" class="msg"></p>
+            <div id="liferaftSmbBrowsePanel" style="display:none;margin-top:8px" class="info-block">
+              <p><button type="button" id="liferaftSmbBrowseUpBtn" class="secondary">.. Up</button> <span id="liferaftSmbBrowseCrumb" class="muted"></span></p>
+              <table class="data-table" id="liferaftSmbBrowseTable">
+                <thead><tr><th></th><th>Size</th><th>Modified</th></tr></thead>
+                <tbody></tbody>
+              </table>
+              <button type="button" id="liferaftSmbBrowseUseBtn">Use this folder</button>
+              <button type="button" id="liferaftSmbBrowseCloseBtn" class="secondary">Close</button>
+            </div>
+          </div>
+
+          <label>How often
+            <select id="liferaftJobFrequency">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label id="liferaftJobDayOfWeekLabel" style="display:none">Day of week
+            <select id="liferaftJobDayOfWeek">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </label>
+          <label id="liferaftJobDayOfMonthLabel" style="display:none">Day of month
+            <select id="liferaftJobDayOfMonth"></select>
+          </label>
+          <label>Time<input type="time" id="liferaftJobTime" value="03:00"></label>
+          <p class="muted" style="margin:4px 0 0 0">Runs as: <code id="liferaftJobCronPreview"></code> <a href="#" id="liferaftJobAdvancedToggle">edit raw cron</a></p>
+          <label id="liferaftJobScheduleLabel" style="display:none">Schedule (5-field cron)<input type="text" id="liferaftJobSchedule" placeholder="0 3 * * *"></label>
           <label>Retention for changed/deleted files
             <select id="liferaftJobRetention">
               <option value="1">1 day</option>

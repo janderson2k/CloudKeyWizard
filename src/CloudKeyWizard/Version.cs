@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.16.0";
+    public const string Version = "2.17.0";
     public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.3.0";
+    public const string BundledFdtScoutVersion = "2.4.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.17.0", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.4.0: LifeRaft's SMB jobs can now be set up by pasting a UNC path (\\\\host\\share\\folder) or browsing the share interactively instead of typing host/share/path blind, and the schedule field is now a plain-language picker (Daily/Weekly/Monthly, a day, a time) that translates to cron automatically, with a raw-cron escape hatch still available.",
+        }),
         new("2.16.0", "2026-09-25", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.3.0: new LifeRaft tab -- read-only pull backups from SMB/FTP/FTPS sources onto the device's own storage, so if the worst happens you can grab the Cloud Key out of the rack and still have your stuff. Saved credentials are reusable across any number of jobs. The live mirror is kept forever; a changed or source-deleted file is protected (never overwritten in place) for a retention window you pick per job. Jobs run one at a time device-wide so they never overwhelm a source or trigger an account lockout. A guided wizard sets up dedicated storage if /volume isn't already there, using the same mounted/boot-flash/secure-partition safety picker this app's own storage step already uses. Includes a read-only file browser for downloading your stuff back out -- LifeRaft never writes back to a source.",

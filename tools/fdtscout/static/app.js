@@ -815,9 +815,241 @@ function liferaftRetentionLabel(days) {
 document.getElementById('liferaftJobProtocol').addEventListener('change', updateLifeRaftJobFormFields);
 function updateLifeRaftJobFormFields() {
   const proto = document.getElementById('liferaftJobProtocol').value;
-  document.getElementById('liferaftJobShareLabel').style.display = proto === 'smb' ? '' : 'none';
+  const isSmb = proto === 'smb';
+  document.getElementById('liferaftJobShareLabel').style.display = isSmb ? '' : 'none';
+  document.getElementById('liferaftJobUncLabel').style.display = isSmb ? '' : 'none';
+  document.getElementById('liferaftBrowseSmbWrap').style.display = isSmb ? '' : 'none';
+  if (!isSmb) document.getElementById('liferaftSmbBrowsePanel').style.display = 'none';
 }
 updateLifeRaftJobFormFields();
+
+// -- UNC path parsing: \\host\share\sub\folders -> Host/Share/Path fields --
+// Deliberately permissive about the leading slashes (1, 2, or written with forward slashes --
+// pasted from different places, not always a clean \\host\share) and about '#' or other characters
+// a share/folder name might contain (UNC paths don't URL-encode those the way a URL would).
+function parseLifeRaftUNC(unc) {
+  let s = unc.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!s) return null;
+  const parts = s.split('/').filter((p) => p.length > 0);
+  if (parts.length < 2) return null; // need at least host + share
+  const host = parts[0];
+  const share = parts[1];
+  const path = parts.length > 2 ? '/' + parts.slice(2).join('/') : '/';
+  return { host, share, path };
+}
+
+document.getElementById('liferaftJobUnc').addEventListener('input', (e) => {
+  const parsed = parseLifeRaftUNC(e.target.value);
+  if (!parsed) return;
+  document.getElementById('liferaftJobHost').value = parsed.host;
+  document.getElementById('liferaftJobShare').value = parsed.share;
+  document.getElementById('liferaftJobPath').value = parsed.path;
+});
+
+// -- Humanized schedule -> cron -----------------------------------------------------------
+const liferaftDayOfMonthSelect = document.getElementById('liferaftJobDayOfMonth');
+for (let d = 1; d <= 28; d++) {
+  const opt = document.createElement('option');
+  opt.value = String(d);
+  opt.textContent = d === 1 ? '1st' : d === 2 ? '2nd' : d === 3 ? '3rd' : `${d}th`;
+  liferaftDayOfMonthSelect.appendChild(opt);
+}
+
+let liferaftAdvancedCron = false;
+
+function computeLifeRaftCron() {
+  const [hh, mm] = (document.getElementById('liferaftJobTime').value || '03:00').split(':');
+  const freq = document.getElementById('liferaftJobFrequency').value;
+  if (freq === 'weekly') {
+    return `${parseInt(mm, 10)} ${parseInt(hh, 10)} * * ${document.getElementById('liferaftJobDayOfWeek').value}`;
+  }
+  if (freq === 'monthly') {
+    return `${parseInt(mm, 10)} ${parseInt(hh, 10)} ${document.getElementById('liferaftJobDayOfMonth').value} * *`;
+  }
+  return `${parseInt(mm, 10)} ${parseInt(hh, 10)} * * *`; // daily
+}
+
+// Best-effort reverse parse -- only recognizes the exact three shapes this UI itself produces
+// (daily/weekly/monthly, single fixed time). Anything else (a step expression, multiple days, a
+// hand-written cron from before this UI existed) falls through to advanced/raw mode rather than
+// guessing wrong and silently changing what a job actually does.
+function tryHumanizeCron(cron) {
+  const fields = (cron || '').trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const [mm, hh, dom, mon, dow] = fields;
+  if (mon !== '*') return null;
+  if (!/^\d+$/.test(mm) || !/^\d+$/.test(hh)) return null;
+  const time = `${hh.padStart(2, '0')}:${mm.padStart(2, '0')}`;
+  if (dom === '*' && dow === '*') return { frequency: 'daily', time };
+  if (dom === '*' && /^[0-6]$/.test(dow)) return { frequency: 'weekly', time, dayOfWeek: dow };
+  if (dow === '*' && /^([1-9]|1\d|2[0-8])$/.test(dom)) return { frequency: 'monthly', time, dayOfMonth: dom };
+  return null;
+}
+
+function updateLifeRaftCronPreview() {
+  const cron = liferaftAdvancedCron
+    ? document.getElementById('liferaftJobSchedule').value.trim()
+    : computeLifeRaftCron();
+  document.getElementById('liferaftJobCronPreview').textContent = cron;
+  if (!liferaftAdvancedCron) document.getElementById('liferaftJobSchedule').value = cron;
+}
+
+function updateLifeRaftFrequencyFields() {
+  const freq = document.getElementById('liferaftJobFrequency').value;
+  document.getElementById('liferaftJobDayOfWeekLabel').style.display = freq === 'weekly' ? '' : 'none';
+  document.getElementById('liferaftJobDayOfMonthLabel').style.display = freq === 'monthly' ? '' : 'none';
+  updateLifeRaftCronPreview();
+}
+
+['liferaftJobFrequency', 'liferaftJobDayOfWeek', 'liferaftJobDayOfMonth', 'liferaftJobTime'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', updateLifeRaftFrequencyFields);
+});
+document.getElementById('liferaftJobSchedule').addEventListener('input', updateLifeRaftCronPreview);
+
+document.getElementById('liferaftJobAdvancedToggle').addEventListener('click', (e) => {
+  e.preventDefault();
+  liferaftAdvancedCron = !liferaftAdvancedCron;
+  const simpleFields = ['liferaftJobFrequency', 'liferaftJobTime'];
+  simpleFields.forEach((id) => { document.getElementById(id).closest('label').style.display = liferaftAdvancedCron ? 'none' : ''; });
+  if (liferaftAdvancedCron) {
+    document.getElementById('liferaftJobDayOfWeekLabel').style.display = 'none';
+    document.getElementById('liferaftJobDayOfMonthLabel').style.display = 'none';
+  } else {
+    updateLifeRaftFrequencyFields();
+  }
+  document.getElementById('liferaftJobScheduleLabel').style.display = liferaftAdvancedCron ? '' : 'none';
+  e.target.textContent = liferaftAdvancedCron ? 'use the simple schedule picker' : 'edit raw cron';
+  updateLifeRaftCronPreview();
+});
+
+// -- SMB share/folder browser -------------------------------------------------------------
+let liferaftBrowseShare = '';
+let liferaftBrowsePath = '';
+
+document.getElementById('liferaftBrowseSmbBtn').addEventListener('click', async () => {
+  const host = document.getElementById('liferaftJobHost').value.trim();
+  const credentialId = document.getElementById('liferaftJobCredential').value;
+  if (!host || !credentialId) {
+    setMsg('liferaftBrowseSmbMsg', false, 'Enter a host and pick a credential first.');
+    return;
+  }
+  const existingShare = document.getElementById('liferaftJobShare').value.trim();
+  liferaftBrowseShare = '';
+  liferaftBrowsePath = '';
+  document.getElementById('liferaftSmbBrowsePanel').style.display = '';
+  if (existingShare) {
+    // Already have a share (typed, pasted via UNC, or editing an existing job) -- jump straight
+    // into browsing it at its configured path instead of making the user re-pick the share.
+    liferaftBrowseShare = existingShare;
+    liferaftBrowsePath = document.getElementById('liferaftJobPath').value.trim().replace(/^\/+/, '');
+    await loadLifeRaftSmbBrowseList();
+  } else {
+    await loadLifeRaftSmbShareList();
+  }
+});
+
+async function liferaftSmbBrowseRequest(body) {
+  const host = document.getElementById('liferaftJobHost').value.trim();
+  const port = parseInt(document.getElementById('liferaftJobPort').value, 10) || 445;
+  const credentialId = document.getElementById('liferaftJobCredential').value;
+  const res = await fetch('/api/liferaft/browse/smb', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ host, port, credentialId, ...body }),
+  });
+  const respBody = await res.json().catch(() => ({}));
+  return { ok: res.ok, body: respBody };
+}
+
+async function loadLifeRaftSmbShareList() {
+  document.getElementById('liferaftSmbBrowseCrumb').textContent = 'Pick a share';
+  document.getElementById('liferaftSmbBrowseUpBtn').style.display = 'none';
+  document.getElementById('liferaftSmbBrowseUseBtn').style.display = 'none';
+  const tbody = document.querySelector('#liferaftSmbBrowseTable tbody');
+  tbody.innerHTML = '<tr><td colspan="3" class="muted">Connecting...</td></tr>';
+  const { ok, body } = await liferaftSmbBrowseRequest({});
+  tbody.innerHTML = '';
+  if (!ok) {
+    setMsg('liferaftBrowseSmbMsg', false, body.error || 'failed to list shares');
+    return;
+  }
+  (body.shares || []).forEach((share) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td></td><td></td><td></td>`;
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = '📁 ' + share;
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      liferaftBrowseShare = share;
+      liferaftBrowsePath = '';
+      loadLifeRaftSmbBrowseList();
+    });
+    tr.firstElementChild.appendChild(link);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadLifeRaftSmbBrowseList() {
+  document.getElementById('liferaftSmbBrowseCrumb').textContent = `${liferaftBrowseShare}/${liferaftBrowsePath}`;
+  document.getElementById('liferaftSmbBrowseUpBtn').style.display = '';
+  document.getElementById('liferaftSmbBrowseUseBtn').style.display = '';
+  const tbody = document.querySelector('#liferaftSmbBrowseTable tbody');
+  tbody.innerHTML = '<tr><td colspan="3" class="muted">Loading...</td></tr>';
+  const { ok, body } = await liferaftSmbBrowseRequest({ share: liferaftBrowseShare, path: liferaftBrowsePath });
+  tbody.innerHTML = '';
+  if (!ok) {
+    setMsg('liferaftBrowseSmbMsg', false, body.error || 'failed to list folder');
+    return;
+  }
+  const dirs = (body.entries || []).filter((e) => e.isDir);
+  dirs.forEach((e) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td></td><td></td><td class="muted">${e.modTime ? new Date(e.modTime).toLocaleString() : ''}</td>`;
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = '📁 ' + e.name;
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      liferaftBrowsePath = (liferaftBrowsePath ? liferaftBrowsePath + '/' : '') + e.name;
+      loadLifeRaftSmbBrowseList();
+    });
+    tr.firstElementChild.appendChild(link);
+    tbody.appendChild(tr);
+  });
+  const files = (body.entries || []).filter((e) => !e.isDir);
+  files.forEach((e) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="muted">${escapeHtml(e.name)}</td><td class="muted">${humanBytes(e.size)}</td><td class="muted">${e.modTime ? new Date(e.modTime).toLocaleString() : ''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('liferaftSmbBrowseUpBtn').addEventListener('click', () => {
+  if (!liferaftBrowseShare) return;
+  if (!liferaftBrowsePath) {
+    // Already at a share's root -- "up" goes back to the share list.
+    liferaftBrowseShare = '';
+    loadLifeRaftSmbShareList();
+    return;
+  }
+  const parts = liferaftBrowsePath.split('/');
+  parts.pop();
+  liferaftBrowsePath = parts.join('/');
+  loadLifeRaftSmbBrowseList();
+});
+
+document.getElementById('liferaftSmbBrowseUseBtn').addEventListener('click', () => {
+  document.getElementById('liferaftJobShare').value = liferaftBrowseShare;
+  document.getElementById('liferaftJobPath').value = liferaftBrowsePath ? '/' + liferaftBrowsePath : '/';
+  document.getElementById('liferaftJobUnc').value = '';
+  document.getElementById('liferaftSmbBrowsePanel').style.display = 'none';
+  setMsg('liferaftBrowseSmbMsg', true, 'Folder selected.');
+});
+
+document.getElementById('liferaftSmbBrowseCloseBtn').addEventListener('click', () => {
+  document.getElementById('liferaftSmbBrowsePanel').style.display = 'none';
+});
 
 function showLifeRaftJobForm(job) {
   document.getElementById('liferaftJobForm').style.display = '';
@@ -828,12 +1060,31 @@ function showLifeRaftJobForm(job) {
   document.getElementById('liferaftJobPort').value = job ? job.port : '';
   document.getElementById('liferaftJobShare').value = job ? (job.share || '') : '';
   document.getElementById('liferaftJobPath').value = job ? job.path : '/';
-  document.getElementById('liferaftJobSchedule').value = job ? job.scheduleCron : '0 3 * * *';
+  document.getElementById('liferaftJobUnc').value = '';
   document.getElementById('liferaftJobRetention').value = job ? String(job.retentionDays) : '7';
   document.getElementById('liferaftJobEnabled').checked = job ? job.enabled : true;
+  document.getElementById('liferaftSmbBrowsePanel').style.display = 'none';
   populateLifeRaftCredentialDropdown();
   if (job) document.getElementById('liferaftJobCredential').value = job.credentialId;
+
+  const humanized = job ? tryHumanizeCron(job.scheduleCron) : null;
+  liferaftAdvancedCron = job ? !humanized : false;
+  document.getElementById('liferaftJobSchedule').value = job ? job.scheduleCron : '0 3 * * *';
+  document.getElementById('liferaftJobScheduleLabel').style.display = liferaftAdvancedCron ? '' : 'none';
+  document.getElementById('liferaftJobAdvancedToggle').textContent = liferaftAdvancedCron ? 'use the simple schedule picker' : 'edit raw cron';
+  ['liferaftJobFrequency', 'liferaftJobTime'].forEach((id) => { document.getElementById(id).closest('label').style.display = liferaftAdvancedCron ? 'none' : ''; });
+  if (humanized) {
+    document.getElementById('liferaftJobFrequency').value = humanized.frequency;
+    document.getElementById('liferaftJobTime').value = humanized.time;
+    if (humanized.dayOfWeek) document.getElementById('liferaftJobDayOfWeek').value = humanized.dayOfWeek;
+    if (humanized.dayOfMonth) document.getElementById('liferaftJobDayOfMonth').value = humanized.dayOfMonth;
+  } else if (!job) {
+    document.getElementById('liferaftJobFrequency').value = 'daily';
+    document.getElementById('liferaftJobTime').value = '03:00';
+  }
   updateLifeRaftJobFormFields();
+  if (!liferaftAdvancedCron) updateLifeRaftFrequencyFields();
+  else updateLifeRaftCronPreview();
 }
 
 document.getElementById('liferaftAddJobBtn').addEventListener('click', () => {
