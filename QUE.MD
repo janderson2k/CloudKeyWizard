@@ -2060,3 +2060,69 @@ updates a couple of button/checkbox properties directly -- nothing else on the p
 - Committed, pushed, published as `publish-v56` and GitHub Release
   [`v2.21.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.21.0) with the exe
   attached. CloudKeyWizard now 2.21.0, bundled FDT.Scout now 2.8.0.
+
+### Same session -- job-edit staleness fixed, Enable/Disable + Run/Stop toggle buttons, FDT.Scout self-update from GitHub
+
+User caught a real regression from earlier this same session's own polling fix, plus asked for two
+UX changes and a new capability, all in one message.
+
+**Job-edit staleness (a real bug in my own recent work)**: the jobs-list refactor that stopped
+tearing down the whole list every 2 seconds only ever patched the small "dynamic" region
+(status/progress/metrics) on an existing card -- the static head (title, disabled marker,
+source/credential/schedule line) was built once when the card was first created and never touched
+again. Editing a job -- unchecking Enabled, changing its label, source, or schedule -- silently
+didn't show up in the list until a manual page refresh. `renderLifeRaftJobHead` is now re-rendered
+on every load/poll, same as the dynamic region already was (cheap and non-disruptive, since the head
+has no listeners or focusable state to lose -- the original disruption problem was specifically
+about destroying and recreating *interactive* elements every 2 seconds).
+
+**A second, subtler bug caught while fixing the first**: the inline quick-toggle buttons (notify
+checkbox, the new Enable/Disable button, Edit) closed over the job object from whenever their card
+was first built, not the latest data. Proved with a real scenario: edit a job's host via the form,
+then click an inline toggle without the card ever being fully rebuilt in between (which only happens
+when the job *set* changes) -- the toggle would have silently resaved the OLD host value, reverting
+the edit. Fixed with a module-level `liferaftJobsCache` that button handlers look up fresh by ID at
+click time instead of closing over a stale snapshot.
+
+**Enable/Disable quick-toggle**: a new button next to Run now, matching the existing notify-checkbox
+pattern (re-saves the job's full record with just `enabled` flipped) -- previously only changeable
+from inside the edit form.
+
+**Run now -> Stop, one button**: replaced the disabled-Run-now-next-to-a-separate-Stop-button
+layout with a single button that changes both its label and its action based on live state (checked
+via a data attribute at click time, since the listener itself is attached once and never
+re-created).
+
+**FDT.Scout self-update from GitHub**: new `selfupdate.go` -- a Check button on the Apps tab's
+FDT.Scout row hits GitHub's release API, downloads the latest `fdtscout-arm64` asset, verifies its
+sha256 against what GitHub reports, and runs `-version` on the downloaded (not yet installed)
+candidate to find out what it actually is -- trusted over the release tag/notes, so there's no
+separate manifest that could drift out of sync. An Update button appears only if that's genuinely
+newer, and applying it re-downloads fresh (never trusts state from an earlier Check call), does the
+same atomic same-directory rename this project's install flow already uses elsewhere, then triggers
+`systemctl restart fdtscout` (the exact same restart command `ExtraCatalog.cs`'s own SSH install
+script already uses, not a second discipline) a moment after responding, so the HTTP response
+reaches the browser before the service actually goes down. Explicitly the one deliberate exception
+to this project's "nothing fetched at runtime" philosophy (stated plainly in `app.js`'s own file
+header) -- scoped narrowly: user-initiated only, never automatic; a short timeout so a device
+with no internet access just reports that plainly instead of hanging. **This release is the first to
+attach `fdtscout-arm64` as its own downloadable asset** (previously only embedded inside
+`CloudKeyWizard.exe`) -- required for this feature to have anything to find; every release from here
+on needs both assets attached.
+
+- **Verified**: go vet/build clean, binary re-embedded/byte-confirmed, `grep -a -c` confirms
+  `FDT.Scout 2.9.0` and the self-update code present. Frontend verified in the Browser pane: proved
+  the stale-closure bug's fix directly (simulated an edit, confirmed the inline toggle sent the
+  fresh field value, not the stale one), confirmed the head now updates without a manual refresh,
+  confirmed the Run/Stop button calls the right endpoint in each state and never both, confirmed the
+  self-update UI's available/up-to-date/error paths all render and message correctly with mocked
+  responses. C# build clean, both loose Debug and published exe smoke-tested (no crash.log), stray
+  process checked/killed first. Confirmed via `sha256sum` that the `fdtscout-arm64` asset actually
+  attached to this GitHub release is byte-identical to the one embedded in `CloudKeyWizard.exe`.
+- **Not live-tested against the user's actual hardware for any of this**, including the self-update
+  feature's actual download-and-restart sequence -- built and verified by every means available
+  short of that device.
+- Committed, pushed, published as `publish-v57` and GitHub Release
+  [`v2.22.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.22.0) with both
+  `CloudKeyWizard.exe` and `fdtscout-arm64` attached. CloudKeyWizard now 2.22.0, bundled FDT.Scout
+  now 2.9.0.
