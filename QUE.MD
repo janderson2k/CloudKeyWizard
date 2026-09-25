@@ -1780,3 +1780,52 @@ incorrect schedule.
 - Committed, pushed, published as `publish-v51` and GitHub Release
   [`v2.17.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.17.0) with the exe
   attached. CloudKeyWizard now 2.17.0, bundled FDT.Scout now 2.4.0.
+
+### Same session -- LifeRaft job visibility: running indicator, per-job Pushbullet alerts, real error detail
+
+User asked to see backup jobs, their logs/failures, and a per-job box to enable/disable alerting.
+An AI-generated mockup image was provided as a starting point, with an explicit warning that it was
+drawn without full understanding of the real system -- checked against the actual data model before
+building rather than copied literally. A mockup was shown back to the user for approval first.
+
+**What the mockup got wrong, and why it wasn't built as drawn**: it showed a 43% progress bar with
+Pause/Stop buttons on the running job. LifeRaft's sync engine (`RunLifeRaftJob`) runs a job
+start-to-finish with no progress-percentage tracking and no cancellation hook -- building that would
+mean real new engineering (streaming progress + an interruptible transfer loop), not a UI change.
+Dropped in favor of a plain "running" badge, which only needed a lightweight in-memory flag. The
+mockup's single vague "Files Transferred" number was also dropped in favor of the real, more
+granular Added/Changed/Deleted counts the sync engine already tracks and records.
+
+**Backend**: `LifeRaftJob` gained `NotifyPushbullet bool`. A new in-memory `liferaftRunningSet`
+(mutex-guarded map, never persisted) tracks which job is mid-run -- purely a UI-visibility flag, not
+a second concurrency guard (the existing `flock`-based run lock already guarantees only one job runs
+at a time device-wide). `RunLifeRaftJob`'s defer chain was extended (registered so it runs *after*
+the run is recorded to history, not before) to fire a new `notifyLifeRaftJobProblem` whenever a run
+finishes `"failed"` or `"partial"` and the job has alerts enabled, reusing the existing
+`notifyAsync`/callsign-tagging plumbing built for monitors. The jobs-list endpoint now returns each
+job wrapped with its live `running` flag without polluting the persisted job record.
+
+**Frontend**: jobs table gained an inline Alert checkbox per row (toggling it re-saves the job's full
+record immediately, no need to open the edit form) and a "(running)" badge next to a job's last-run
+status; the job form also gained the same checkbox for the create flow. Run history gained a real
+computed Duration column (from `startedAt`/`finishedAt`, not previously shown at all) and replaced
+the bare "N error(s)" count with a `<details>`-expandable list of the actual error text -- the data
+was already being captured into `Errors []string` on every failure, just never surfaced.
+
+- **Verified**: go vet/build clean under the real cross-compile target, binary re-embedded and
+  confirmed byte-identical via `cmp`, `grep -a -c` confirms `FDT.Scout 2.5.0` and `notifyPushbullet`
+  present in the compiled binary. Frontend exercised in the Browser pane with a real mocked-fetch
+  harness -- not just checked by reading the code: rendered the jobs table with a running job and a
+  failed job, clicked the inline alert checkbox and confirmed the exact POST payload sent (full job
+  record, `notifyPushbullet` flipped, the ephemeral `running` field correctly stripped before send),
+  opened run history and confirmed duration computed correctly (4m 12s / 18m 40s) and the real error
+  text rendered, and confirmed the edit form correctly preloads the checkbox state per job while a
+  new job defaults unchecked. C# build clean, both loose Debug and published exe smoke-tested (no
+  crash.log) -- checked for and killed a stray leftover process from an earlier session's testing
+  before each smoke test, after a scare on the previous release turned out to be exactly that.
+- **Not live-tested against a real Pushbullet account or real hardware** -- the notification firing
+  logic hasn't been confirmed against a real push arriving on a phone, and no real SMB/FTP failure
+  has been observed to confirm the error text shown is genuinely useful in practice.
+- Committed, pushed, published as `publish-v52` and GitHub Release
+  [`v2.18.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.18.0) with the exe
+  attached. CloudKeyWizard now 2.18.0, bundled FDT.Scout now 2.5.0.
