@@ -1829,3 +1829,63 @@ was already being captured into `Errors []string` on every failure, just never s
 - Committed, pushed, published as `publish-v52` and GitHub Release
   [`v2.18.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.18.0) with the exe
   attached. CloudKeyWizard now 2.18.0, bundled FDT.Scout now 2.5.0.
+
+### Same session -- real live-testing bug found and fixed, jobs dashboard rebuilt for real
+
+User ran the previous build against real hardware for the first time this session -- the actual
+first live test of LifeRaft -- and reported: "I started the job at least twice and there are no
+metrics," plus that the delivered UI was a "shitty," "LOW level" version of the approved mockup.
+
+**The real bug**: re-reading the sync code found that `sourceConnectTimeout` (15s) only bounds the
+initial TCP handshake -- nothing past that point had any timeout. Neither go-smb2 nor jlaffaye/ftp
+set a deadline on the connection themselves, so a source that accepted the connection but then
+stalled (a firewall silently dropping packets rather than refusing, a server that hangs
+mid-negotiate) blocked the run forever with nothing ever recorded to history. Because the run lock
+is a blocking global queue, a second "Run now" click just queued silently behind the same permanent
+hang -- exactly matching "started it twice, no metrics either time." Fixed with a `deadlineConn`
+wrapper (`liferaft_source.go`) that resets an idle deadline before every Read/Write on the
+underlying connection, injected into both go-smb2 (`d.Dial`) and jlaffaye/ftp (`ftp.DialWithNetConn`)
+at the connection layer so every subsequent protocol operation gets it for free. Bounds silence
+(2 minutes with zero progress), not total duration -- a genuinely slow but progressing transfer is
+unaffected.
+
+**The UI rebuild**: the jobs table was replaced with real cards (`.liferaft-job-card`), matching the
+mockup's visual weight instead of a dense table row. The mockup's progress bar was previously
+dropped as "not real" -- this pass made it real instead: a new in-memory `liferaftLiveProgress`
+tracker (mutex-guarded, per job, never persisted) is updated by the sync loop itself as it goes
+(`liferaft_sync.go`), giving a genuine files-processed/files-total fraction (not a guess) plus live
+added/changed/deleted/bytes-transferred numbers. The jobs endpoint exposes this when a job is
+running; the frontend self-polls every 2s only while at least one job is actually running (stops the
+moment nothing is), rendering a real progress bar and live-updating metric tiles on the running
+job's card. A finished job's card shows the same metric tiles from its last run, plus the actual
+error text inline (not buried behind History) when that run failed or had errors. The storage
+overview strip at the top of the tab was given more visual weight (bigger free-space number,
+explicit "System ready" line) to read like the mockup's summary panel. Pause/Stop were confirmed
+still out of scope -- no real cancellation hook into the sync loop exists yet -- and were left out
+rather than faked a second time.
+
+**A real mistake caught before it shipped**: the first draft used a Tabler icon-font `<i class="ti
+...">` glyph in the storage strip, copied habitually from the mockup-drawing tool's own convention.
+This app deliberately has zero CDN dependencies (stated outright at the top of `app.js` -- a CDN
+icon font is one more thing that can silently fail to load on a LAN device with no guaranteed
+internet access). Caught by checking whether Tabler's font was actually loaded anywhere in this
+codebase (it wasn't) before shipping, not after -- replaced with a plain Unicode checkmark,
+consistent with how the rest of this codebase already handles status glyphs.
+
+- **Verified**: go vet/build clean, binary re-embedded/byte-confirmed, `grep -a -c` confirms
+  `FDT.Scout 2.6.0` and the new `filesTotal`/`filesProcessed`/`progress` JSON fields present in the
+  compiled binary. Frontend verified in the Browser pane with a mocked-fetch harness driving a
+  genuinely running job: confirmed the progress bar computed the correct percentage from real
+  files-processed/files-total numbers, confirmed the self-poll loop actually re-rendered and grew
+  the live "elapsed" figure across real wall-clock time between tool calls (not just a static
+  render), confirmed a failed job's card shows its real error text, confirmed Run Now is disabled
+  while a job is already running, and confirmed the alert toggle still correctly excludes the
+  ephemeral `running`/`progress` fields from its save payload. C# build clean, both loose Debug and
+  published exe smoke-tested (no crash.log), stray leftover process checked for and killed first.
+- **Still not confirmed against the exact live failure that prompted this** -- the timeout fix and
+  live dashboard are built and verified by every means available without that specific hardware in
+  hand; the next real run against the user's actual source is what will confirm the hang is
+  genuinely gone rather than just plausible.
+- Committed, pushed, published as `publish-v53` and GitHub Release
+  [`v2.19.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.19.0) with the exe
+  attached. CloudKeyWizard now 2.19.0, bundled FDT.Scout now 2.6.0.
