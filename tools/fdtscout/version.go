@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.7.1"
+	Version   = "2.8.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,16 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.8.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"Fixed a real bug: SMB jobs ignored the configured \"Path within the share\" entirely and always backed up the whole share from its root. Fixed to actually scope to the configured subfolder, matching how FTP jobs already worked.",
+			"New: a \"Test connection\" button on the job form checks the exact host/share/path/credential currently typed in -- before you ever save the job -- using the same connect-and-list logic a real run uses, so a pass here means a real run will get past the connection step too.",
+			"New: a Stop button on a running job. Takes effect between files (not instantly mid-transfer), and a stopped run is recorded honestly as \"Stopped,\" not as a failure -- whatever it already backed up before stopping is kept.",
+			"Fixed a real bug: the jobs list rebuilt its entire contents every 2 seconds while any job was running, which could make a nearby form field feel impossible to type into. Now only the parts that actually change (status, progress, metrics) update in place.",
+		},
+	},
 	{
 		Version: "2.7.1",
 		Date:    "2026-09-25",

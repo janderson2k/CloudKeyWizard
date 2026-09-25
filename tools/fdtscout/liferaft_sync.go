@@ -204,6 +204,63 @@ func IsLifeRaftJobRunning(jobID string) bool {
 	return ok
 }
 
+// errLifeRaftStopped is a sentinel, not a real failure -- RunLifeRaftJob checks for it specifically
+// so a user-requested stop is recorded as "cancelled," not "failed."
+var errLifeRaftStopped = fmt.Errorf("stopped by user")
+
+// Stop support: only one job runs at a time (the run lock already guarantees that), so a single
+// cancel channel identified by job ID is enough -- no per-job map needed. Cancellation is checked
+// between files and between listing calls, not mid-transfer: interrupting a live network read would
+// need the connection layer itself to be cancellation-aware, real additional plumbing this pass
+// doesn't add. In practice this means Stop takes effect within one file's transfer time, not
+// instantly -- worth knowing, not worth blocking the feature on.
+var (
+	liferaftStopMu    sync.Mutex
+	liferaftStopCh    chan struct{}
+	liferaftStopJobID string
+)
+
+func beginLifeRaftCancellable(jobID string) (checkStop func() bool) {
+	ch := make(chan struct{})
+	liferaftStopMu.Lock()
+	liferaftStopCh = ch
+	liferaftStopJobID = jobID
+	liferaftStopMu.Unlock()
+	return func() bool {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
+func endLifeRaftCancellable(jobID string) {
+	liferaftStopMu.Lock()
+	if liferaftStopJobID == jobID {
+		liferaftStopJobID = ""
+		liferaftStopCh = nil
+	}
+	liferaftStopMu.Unlock()
+}
+
+// RequestLifeRaftStop signals jobID to stop at its next checkpoint. Returns false if that job isn't
+// the one currently running (nothing to stop, or a different job holds the run lock right now).
+func RequestLifeRaftStop(jobID string) bool {
+	liferaftStopMu.Lock()
+	defer liferaftStopMu.Unlock()
+	if liferaftStopJobID != jobID || liferaftStopCh == nil {
+		return false
+	}
+	select {
+	case <-liferaftStopCh:
+	default:
+		close(liferaftStopCh)
+	}
+	return true
+}
+
 func ListLifeRaftRuns(jobID string) []LifeRaftRunResult {
 	var runs []LifeRaftRunResult
 	if data, err := os.ReadFile(jobRunsPath(jobID)); err == nil {
@@ -225,6 +282,9 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	startLifeRaftJobProgress(job.ID, startedAt)
 	defer clearLifeRaftJobProgress(job.ID) // registered first -> runs last, after the run is recorded below
 
+	checkStop := beginLifeRaftCancellable(job.ID)
+	defer endLifeRaftCancellable(job.ID)
+
 	result := LifeRaftRunResult{ID: randomLifeRaftID("run"), JobID: job.ID, StartedAt: startedAt, Status: "running"}
 	upsertLifeRaftRun(result) // durable placeholder -- see upsertLifeRaftRun's own doc comment for why
 
@@ -238,7 +298,9 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			result.Err = fmt.Errorf("internal error: %v", p)
 		}
 		result.FinishedAt = time.Now().UTC()
-		if result.Err != nil {
+		if result.Err == errLifeRaftStopped {
+			result.Status = "cancelled"
+		} else if result.Err != nil {
 			result.Status = "failed"
 			result.Errors = append(result.Errors, result.Err.Error())
 		} else if len(result.Errors) > 0 {
@@ -247,7 +309,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			result.Status = "ok"
 		}
 		upsertLifeRaftRun(result)
-		if job.NotifyPushbullet && result.Status != "ok" {
+		if job.NotifyPushbullet && result.Status != "ok" && result.Status != "cancelled" {
 			notifyLifeRaftJobProblem(job.Label, result.Status, result.Errors)
 		}
 	}()
@@ -279,8 +341,12 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	defer src.Close()
 
 	remote := map[string]sourceEntry{}
-	if err := walkSource(src, "", remote); err != nil {
-		result.Err = fmt.Errorf("listing source: %w", err)
+	if err := walkSource(src, "", remote, checkStop); err != nil {
+		if err == errLifeRaftStopped {
+			result.Err = err
+		} else {
+			result.Err = fmt.Errorf("listing source: %w", err)
+		}
 		return result
 	}
 
@@ -295,6 +361,10 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	}
 
 	for relPath, entry := range remote {
+		if checkStop() {
+			result.Err = errLifeRaftStopped
+			break
+		}
 		old, existed := oldManifest[relPath]
 		unchanged := existed && old.Size == entry.Size && old.ModTime.Equal(entry.ModTime)
 		if unchanged {
@@ -331,6 +401,10 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	}
 
 	for relPath, old := range oldManifest {
+		if result.Err == nil && checkStop() {
+			result.Err = errLifeRaftStopped
+			break
+		}
 		if _, stillPresent := remote[relPath]; stillPresent {
 			continue
 		}
@@ -374,8 +448,13 @@ func cleanupStrayLifeRaftTempFiles(jobID string) {
 
 // walkSource recursively lists a source into a flat map, depth-first, using only the narrow
 // sourceReader interface -- the same List call shape works identically for SMB and FTP, so the
-// recursion logic itself never needs to know which protocol it's talking to.
-func walkSource(src sourceReader, dir string, out map[string]sourceEntry) error {
+// recursion logic itself never needs to know which protocol it's talking to. checkStop is polled
+// between directories so a Stop request takes effect during a large tree's enumeration too, not
+// only once the diff loop starts.
+func walkSource(src sourceReader, dir string, out map[string]sourceEntry, checkStop func() bool) error {
+	if checkStop() {
+		return errLifeRaftStopped
+	}
 	files, subdirs, err := src.List(dir)
 	if err != nil {
 		return fmt.Errorf("listing %q: %w", dir, err)
@@ -384,7 +463,7 @@ func walkSource(src sourceReader, dir string, out map[string]sourceEntry) error 
 		out[f.Path] = f
 	}
 	for _, sub := range subdirs {
-		if err := walkSource(src, sub, out); err != nil {
+		if err := walkSource(src, sub, out, checkStop); err != nil {
 			return err // a source-side permission error deep in the tree aborts the whole run rather than silently under-backing-up
 		}
 	}

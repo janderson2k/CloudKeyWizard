@@ -95,3 +95,17 @@ func handleLifeRaftJobRuns(w http.ResponseWriter, r *http.Request, _ string) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ListLifeRaftRuns(id))
 }
+
+// handleLifeRaftJobStop signals a running job to stop at its next checkpoint (between files, not
+// mid-transfer -- see RequestLifeRaftStop's own doc comment). Returns 409 if this job isn't the one
+// currently running, since there's nothing to stop.
+func handleLifeRaftJobStop(w http.ResponseWriter, r *http.Request, _ string) {
+	id := r.PathValue("id")
+	w.Header().Set("Content-Type", "application/json")
+	if !RequestLifeRaftStop(id) {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "this job isn't currently running"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"stopping": true})
+}

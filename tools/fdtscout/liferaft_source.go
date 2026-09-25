@@ -95,6 +95,7 @@ type smbSource struct {
 	conn    net.Conn
 	session *smb2.Session
 	share   *smb2.Share // never exposed outside this file
+	root    string      // job.Path within the share -- see the real bug this closes, below
 }
 
 // connectSMBSession opens a raw SMB session -- NOT yet mounted to any share -- shared by both
@@ -128,11 +129,20 @@ func connectSMBSource(job LifeRaftJob, username, domain, password string) (sourc
 		conn.Close()
 		return nil, fmt.Errorf("mounting share %q failed: %w", job.Share, err)
 	}
-	return &smbSource{conn: conn, session: session, share: share}, nil
+	root := job.Path
+	if root == "" {
+		root = "/"
+	}
+	return &smbSource{conn: conn, session: session, share: share, root: root}, nil
 }
 
+// Real bug found live: List/Open used to operate straight off the mounted share's own root,
+// completely ignoring job.Path -- every SMB job backed up the ENTIRE share, not the configured
+// subfolder (e.g. "DEV Backup" configured for /#Shares/UserFolders/jason.anderson/#Dev would have
+// backed up the whole "Data" share once it could connect at all). FTP already joined against its
+// own root correctly; SMB never got the same treatment. Fixed to match.
 func (s *smbSource) List(dir string) ([]sourceEntry, []string, error) {
-	full := smbJoin(dir)
+	full := smbJoin(path.Join(s.root, dir))
 	entries, err := s.share.ReadDir(full)
 	if err != nil {
 		return nil, nil, err
@@ -151,7 +161,7 @@ func (s *smbSource) List(dir string) ([]sourceEntry, []string, error) {
 }
 
 func (s *smbSource) Open(relPath string) (io.ReadCloser, error) {
-	return s.share.Open(smbJoin(relPath))
+	return s.share.Open(smbJoin(path.Join(s.root, relPath)))
 }
 
 func (s *smbSource) Close() error {
@@ -160,8 +170,14 @@ func (s *smbSource) Close() error {
 	return s.conn.Close()
 }
 
-// smbJoin converts a forward-slash relative path into the backslash form go-smb2 expects.
+// smbJoin converts a forward-slash relative path into the backslash form go-smb2 expects. Also
+// strips a leading separator: job.Path/s.root always starts with "/" (defaulted, never blank), so
+// path.Join(s.root, dir) always produces a leading "/" -- go-smb2's own validatePath explicitly
+// rejects a leading '\' on Open/ReadDir ("leading '\\' is not allowed in this operation", checked
+// directly against the vendored source, not assumed), so passing that straight through would have
+// made every SMB job fail outright rather than just ignoring the configured subpath.
 func smbJoin(relPath string) string {
+	relPath = strings.TrimPrefix(relPath, "/")
 	if relPath == "" {
 		return ""
 	}

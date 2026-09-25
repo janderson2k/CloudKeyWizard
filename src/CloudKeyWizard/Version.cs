@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.20.1";
+    public const string Version = "2.21.0";
     public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.7.1";
+    public const string BundledFdtScoutVersion = "2.8.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.21.0", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.8.0: fixed a real bug where SMB jobs ignored the configured subfolder and always backed up the whole share; added a \"Test connection\" button on the job form to check host/share/path/credential before saving; added a real Stop button for a running job (takes effect between files, recorded honestly as \"Stopped\" with whatever was already backed up kept); and fixed the jobs list rebuilding itself every 2 seconds while a job ran, which could make a nearby field feel impossible to type into.",
+        }),
         new("2.20.1", "2026-09-25", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.7.1: fixed the actual cause behind LifeRaft runs still vanishing after the previous fix -- a job's run history silently failed to save for any job that had never once connected successfully, because its own data folder didn't exist yet and nothing created it before writing. A run that fails at the connection step (bad credentials, unreachable host, a share permission error) now shows that failure instead of showing nothing.",

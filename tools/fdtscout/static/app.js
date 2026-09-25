@@ -777,6 +777,129 @@ function liferaftPanelActive() {
   return !!panel && panel.classList.contains('active');
 }
 
+// Builds just the part of a job card that changes on every poll -- status pill, progress bar,
+// error/interrupted snippet, and the metric tiles. Kept as its own function so a poll can replace
+// ONLY this region (see loadLifeRaftJobs's real bug fix below) instead of tearing down the whole
+// card, which previously destroyed and rebuilt every button/listener on the page every 2 seconds
+// while any job was running -- including while the user was mid-edit in the job form elsewhere on
+// the same page, which is what made a nearby text field feel impossible to type into.
+function renderLifeRaftJobDynamic(j, lastRun) {
+  const orphaned = !j.running && lastRun && lastRun.status === 'running';
+  const status = j.running ? 'running' : (orphaned ? 'interrupted' : (lastRun ? lastRun.status : 'never'));
+  const statusLabel = { running: 'Running', ok: 'Ok', partial: 'Warning', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Stopped', never: 'Never run' }[status];
+
+  let html = `<span class="liferaft-status-pill status-${status}">${statusLabel}</span>`;
+
+  if (j.running && j.progress && j.progress.filesTotal > 0) {
+    const pct = Math.min(100, Math.round((j.progress.filesProcessed / j.progress.filesTotal) * 100));
+    html += `<div class="liferaft-progress"><div class="liferaft-progress-fill" style="width:${pct}%"></div></div>`;
+  }
+
+  if (orphaned) {
+    html += `<div class="liferaft-error-snippet">This run started at ${escapeHtml(new Date(lastRun.startedAt).toLocaleString())} but never finished -- the device likely restarted mid-backup. Run it again.</div>`;
+  } else if (!j.running && lastRun && lastRun.errors && lastRun.errors.length) {
+    html += `<div class="liferaft-error-snippet">${escapeHtml(lastRun.errors[0])}</div>`;
+  }
+
+  const metrics = j.running ? j.progress : lastRun;
+  if (metrics) {
+    const elapsedOrDuration = j.running
+      ? liferaftFormatDuration(j.progress.startedAt, new Date().toISOString())
+      : liferaftFormatDuration(lastRun.startedAt, lastRun.finishedAt);
+    html += `<div class="liferaft-metrics">
+        <div><div class="liferaft-metric-label">Added</div><div class="liferaft-metric-value">${metrics.filesAdded}</div></div>
+        <div><div class="liferaft-metric-label">Changed</div><div class="liferaft-metric-value">${metrics.filesChanged}</div></div>
+        <div><div class="liferaft-metric-label">Deleted</div><div class="liferaft-metric-value">${metrics.filesDeleted}</div></div>
+        <div><div class="liferaft-metric-label">Transferred</div><div class="liferaft-metric-value">${humanBytes(metrics.bytesTransferred)}</div></div>
+        <div><div class="liferaft-metric-label">${j.running ? 'Elapsed' : 'Duration'}</div><div class="liferaft-metric-value">${elapsedOrDuration}</div></div>
+      </div>`;
+  } else {
+    html += `<div class="muted" style="margin-top:10px;font-size:13px">No runs yet -- retention ${liferaftRetentionLabel(j.retentionDays)}</div>`;
+  }
+  return html;
+}
+
+// Builds a job card the first time it's seen: static head (title/source, never changes after
+// creation) + the dynamic region (see above) + the action row (buttons/checkbox, listeners
+// attached once and never re-created).
+function buildLifeRaftJobCard(j) {
+  const cred = liferaftCredsCache.find((c) => c.id === j.credentialId);
+  const source = j.protocol === 'smb' ? `${j.host}/${j.share}${j.path && j.path !== '/' ? j.path : ''}` : `${j.host}${j.path || '/'}`;
+
+  const card = document.createElement('div');
+  card.dataset.jobId = j.id;
+
+  const head = document.createElement('div');
+  head.className = 'liferaft-job-head';
+  head.innerHTML = `<div>
+      <div class="liferaft-job-title">${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted" style="font-weight:400">(disabled)</span>'}</div>
+      <div class="liferaft-job-sub">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)} &middot; ${escapeHtml(cred ? cred.label : 'unknown credential')} &middot; ${escapeHtml(j.scheduleCron)}</div>
+    </div>`;
+  card.appendChild(head);
+
+  const dynamic = document.createElement('div');
+  dynamic.className = 'liferaft-job-dynamic';
+  card.appendChild(dynamic);
+
+  const actions = document.createElement('div');
+  actions.className = 'liferaft-job-actions';
+
+  const notifyLabel = document.createElement('label');
+  const notifyCheckbox = document.createElement('input');
+  notifyCheckbox.type = 'checkbox';
+  notifyCheckbox.className = 'liferaft-notify-checkbox';
+  notifyCheckbox.style.width = 'auto';
+  notifyCheckbox.setAttribute('aria-label', `Notify via Pushbullet for ${j.label}`);
+  notifyCheckbox.addEventListener('change', () => toggleLifeRaftJobNotify(j, notifyCheckbox.checked));
+  notifyLabel.appendChild(notifyCheckbox);
+  notifyLabel.appendChild(document.createTextNode('Alert on failure'));
+  actions.appendChild(notifyLabel);
+
+  const spacer = document.createElement('div');
+  spacer.className = 'spacer';
+  actions.appendChild(spacer);
+
+  const runBtn = document.createElement('button');
+  runBtn.className = 'secondary liferaft-run-btn';
+  runBtn.textContent = 'Run now';
+  runBtn.addEventListener('click', () => runLifeRaftJobNow(j.id, j.label));
+  actions.appendChild(runBtn);
+
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'secondary liferaft-stop-btn';
+  stopBtn.textContent = 'Stop';
+  stopBtn.style.display = 'none';
+  stopBtn.addEventListener('click', () => stopLifeRaftJobNow(j.id, j.label));
+  actions.appendChild(stopBtn);
+
+  const historyBtn = document.createElement('button');
+  historyBtn.className = 'secondary';
+  historyBtn.textContent = 'History';
+  historyBtn.addEventListener('click', () => showLifeRaftRunHistory(j.id, j.label));
+  actions.appendChild(historyBtn);
+
+  const browseBtn = document.createElement('button');
+  browseBtn.className = 'secondary';
+  browseBtn.textContent = 'Browse';
+  browseBtn.addEventListener('click', () => openLifeRaftBrowser(j.id, j.label));
+  actions.appendChild(browseBtn);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'secondary';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', () => showLifeRaftJobForm(j));
+  actions.appendChild(editBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'secondary';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', () => deleteLifeRaftJob(j.id));
+  actions.appendChild(delBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
 async function loadLifeRaftJobs() {
   if (liferaftPollTimer) { clearTimeout(liferaftPollTimer); liferaftPollTimer = null; }
   if (!liferaftPanelActive()) return;
@@ -785,113 +908,38 @@ async function loadLifeRaftJobs() {
   if (!res.ok) return;
   const jobs = await res.json();
   const list = document.getElementById('liferaftJobsList');
-  list.innerHTML = '';
   let anyRunning = false;
+
+  // Real bug fixed here: this used to rebuild the entire list (list.innerHTML = '') on every poll,
+  // tearing down and recreating every card/button/listener every 2 seconds while any job was
+  // running -- visible as constant flicker, and disruptive enough that typing into a nearby field
+  // (the job form is a sibling in the same panel) felt broken. Now a card is only ever fully built
+  // once; a poll updates just its dynamic region and a couple of button/checkbox properties on the
+  // existing element, leaving everything else -- including whatever else is on the page -- alone.
+  const existingCards = new Map([...list.querySelectorAll('.liferaft-job-card')].map((el) => [el.dataset.jobId, el]));
+  const seenIds = new Set();
 
   for (const j of jobs) {
     if (j.running) anyRunning = true;
-    const cred = liferaftCredsCache.find((c) => c.id === j.credentialId);
-    const source = j.protocol === 'smb' ? `${j.host}/${j.share}${j.path && j.path !== '/' ? j.path : ''}` : `${j.host}${j.path || '/'}`;
+    seenIds.add(j.id);
     const runs = await fetch(`/api/liferaft/jobs/${encodeURIComponent(j.id)}/runs`).then((r) => r.ok ? r.json() : []);
     const lastRun = runs && runs.length ? runs[0] : null;
 
-    // A persisted run can be stuck at status "running" if FDT.Scout itself died mid-run (a crash,
-    // a service restart) -- the in-memory j.running flag is what tells a genuinely active run apart
-    // from that stale leftover, which gets its own label rather than looking like a live run.
-    const orphaned = !j.running && lastRun && lastRun.status === 'running';
-    const status = j.running ? 'running' : (orphaned ? 'interrupted' : (lastRun ? lastRun.status : 'never'));
-    const statusLabel = { running: 'Running', ok: 'Ok', partial: 'Warning', failed: 'Failed', interrupted: 'Interrupted', never: 'Never run' }[status];
-
-    const card = document.createElement('div');
-    card.className = 'liferaft-job-card' + (j.running ? ' is-running' : '');
-
-    let html = `<div class="liferaft-job-head">
-        <div>
-          <div class="liferaft-job-title">${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted" style="font-weight:400">(disabled)</span>'}</div>
-          <div class="liferaft-job-sub">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)} &middot; ${escapeHtml(cred ? cred.label : 'unknown credential')} &middot; ${escapeHtml(j.scheduleCron)}</div>
-        </div>
-        <span class="liferaft-status-pill status-${status}">${statusLabel}</span>
-      </div>`;
-
-    if (j.running && j.progress && j.progress.filesTotal > 0) {
-      const pct = Math.min(100, Math.round((j.progress.filesProcessed / j.progress.filesTotal) * 100));
-      html += `<div class="liferaft-progress"><div class="liferaft-progress-fill" style="width:${pct}%"></div></div>`;
+    let card = existingCards.get(j.id);
+    if (!card) {
+      card = buildLifeRaftJobCard(j);
+      card.className = 'liferaft-job-card';
+      list.appendChild(card);
     }
+    card.classList.toggle('is-running', !!j.running);
+    card.querySelector('.liferaft-job-dynamic').innerHTML = renderLifeRaftJobDynamic(j, lastRun);
+    card.querySelector('.liferaft-notify-checkbox').checked = !!j.notifyPushbullet;
+    card.querySelector('.liferaft-run-btn').disabled = !!j.running;
+    card.querySelector('.liferaft-stop-btn').style.display = j.running ? '' : 'none';
+  }
 
-    if (orphaned) {
-      html += `<div class="liferaft-error-snippet">This run started at ${escapeHtml(new Date(lastRun.startedAt).toLocaleString())} but never finished -- the device likely restarted mid-backup. Run it again.</div>`;
-    } else if (!j.running && lastRun && lastRun.errors && lastRun.errors.length) {
-      html += `<div class="liferaft-error-snippet">${escapeHtml(lastRun.errors[0])}</div>`;
-    }
-
-    const metrics = j.running ? j.progress : lastRun;
-    if (metrics) {
-      const elapsedOrDuration = j.running
-        ? liferaftFormatDuration(j.progress.startedAt, new Date().toISOString())
-        : liferaftFormatDuration(lastRun.startedAt, lastRun.finishedAt);
-      html += `<div class="liferaft-metrics">
-          <div><div class="liferaft-metric-label">Added</div><div class="liferaft-metric-value">${metrics.filesAdded}</div></div>
-          <div><div class="liferaft-metric-label">Changed</div><div class="liferaft-metric-value">${metrics.filesChanged}</div></div>
-          <div><div class="liferaft-metric-label">Deleted</div><div class="liferaft-metric-value">${metrics.filesDeleted}</div></div>
-          <div><div class="liferaft-metric-label">Transferred</div><div class="liferaft-metric-value">${humanBytes(metrics.bytesTransferred)}</div></div>
-          <div><div class="liferaft-metric-label">${j.running ? 'Elapsed' : 'Duration'}</div><div class="liferaft-metric-value">${elapsedOrDuration}</div></div>
-        </div>`;
-    } else {
-      html += `<div class="muted" style="margin-top:10px;font-size:13px">No runs yet -- retention ${liferaftRetentionLabel(j.retentionDays)}</div>`;
-    }
-
-    html += `<div class="liferaft-job-actions"></div>`;
-    card.innerHTML = html;
-
-    const actions = card.querySelector('.liferaft-job-actions');
-
-    const notifyLabel = document.createElement('label');
-    const notifyCheckbox = document.createElement('input');
-    notifyCheckbox.type = 'checkbox';
-    notifyCheckbox.checked = !!j.notifyPushbullet;
-    notifyCheckbox.style.width = 'auto';
-    notifyCheckbox.setAttribute('aria-label', `Notify via Pushbullet for ${j.label}`);
-    notifyCheckbox.addEventListener('change', () => toggleLifeRaftJobNotify(j, notifyCheckbox.checked));
-    notifyLabel.appendChild(notifyCheckbox);
-    notifyLabel.appendChild(document.createTextNode('Alert on failure'));
-    actions.appendChild(notifyLabel);
-
-    const spacer = document.createElement('div');
-    spacer.className = 'spacer';
-    actions.appendChild(spacer);
-
-    const runBtn = document.createElement('button');
-    runBtn.className = 'secondary';
-    runBtn.textContent = 'Run now';
-    runBtn.disabled = j.running;
-    runBtn.addEventListener('click', () => runLifeRaftJobNow(j.id, j.label));
-    actions.appendChild(runBtn);
-
-    const historyBtn = document.createElement('button');
-    historyBtn.className = 'secondary';
-    historyBtn.textContent = 'History';
-    historyBtn.addEventListener('click', () => showLifeRaftRunHistory(j.id, j.label));
-    actions.appendChild(historyBtn);
-
-    const browseBtn = document.createElement('button');
-    browseBtn.className = 'secondary';
-    browseBtn.textContent = 'Browse';
-    browseBtn.addEventListener('click', () => openLifeRaftBrowser(j.id, j.label));
-    actions.appendChild(browseBtn);
-
-    const editBtn = document.createElement('button');
-    editBtn.className = 'secondary';
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', () => showLifeRaftJobForm(j));
-    actions.appendChild(editBtn);
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'secondary';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', () => deleteLifeRaftJob(j.id));
-    actions.appendChild(delBtn);
-
-    list.appendChild(card);
+  for (const [id, el] of existingCards) {
+    if (!seenIds.has(id)) el.remove();
   }
 
   if (jobs.length === 0) {
@@ -901,6 +949,13 @@ async function loadLifeRaftJobs() {
   if (anyRunning && liferaftPanelActive()) {
     liferaftPollTimer = setTimeout(loadLifeRaftJobs, 2000);
   }
+}
+
+async function stopLifeRaftJobNow(id, label) {
+  const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  setMsg('liferaftJobMsg', res.ok, res.ok ? `${label}: stopping -- it will finish the file it's on, then stop.` : (body.error || 'failed'));
+  if (res.ok) setTimeout(loadLifeRaftJobs, 400);
 }
 
 function liferaftRetentionLabel(days) {
@@ -1026,6 +1081,48 @@ document.getElementById('liferaftJobAdvancedToggle').addEventListener('click', (
   document.getElementById('liferaftJobScheduleLabel').style.display = liferaftAdvancedCron ? '' : 'none';
   e.target.textContent = liferaftAdvancedCron ? 'use the simple schedule picker' : 'edit raw cron';
   updateLifeRaftCronPreview();
+});
+
+// -- Test connection (SMB and FTP/FTPS -- runs the exact connect+list logic a real run would use,
+// against whatever's currently typed into the form, before the job is ever saved) --------------
+document.getElementById('liferaftTestConnBtn').addEventListener('click', async () => {
+  const protocol = document.getElementById('liferaftJobProtocol').value;
+  const host = document.getElementById('liferaftJobHost').value.trim();
+  const credentialId = document.getElementById('liferaftJobCredential').value;
+  if (!host || !credentialId) {
+    setMsg('liferaftTestConnMsg', false, 'Enter a host and pick a credential first.');
+    return;
+  }
+  if (protocol === 'smb' && !document.getElementById('liferaftJobShare').value.trim()) {
+    setMsg('liferaftTestConnMsg', false, 'Enter a share name first.');
+    return;
+  }
+  const btn = document.getElementById('liferaftTestConnBtn');
+  btn.disabled = true;
+  setMsg('liferaftTestConnMsg', true, 'Testing...');
+  const payload = {
+    protocol,
+    host,
+    port: parseInt(document.getElementById('liferaftJobPort').value, 10) || 0,
+    share: document.getElementById('liferaftJobShare').value.trim(),
+    path: document.getElementById('liferaftJobPath').value.trim() || '/',
+    credentialId,
+  };
+  try {
+    const res = await fetch('/api/liferaft/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (body.ok) {
+      setMsg('liferaftTestConnMsg', true, `Connected -- found ${body.files} file(s) and ${body.folders} folder(s) at this path.`);
+    } else {
+      setMsg('liferaftTestConnMsg', false, body.error || 'Test failed.');
+    }
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // -- SMB share/folder browser -------------------------------------------------------------
@@ -1259,7 +1356,7 @@ async function showLifeRaftRunHistory(id, label) {
   const tbody = document.querySelector('#liferaftRunsTable tbody');
   tbody.innerHTML = '';
   runs.forEach((r) => {
-    const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : r.status === 'running' ? '#4a9eff' : '#ff6b6b';
+    const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : r.status === 'running' ? '#4a9eff' : r.status === 'cancelled' ? '#8a92a3' : '#ff6b6b';
     const duration = liferaftFormatDuration(r.startedAt, r.finishedAt);
     let errorsCell = '';
     if (r.errors && r.errors.length) {
