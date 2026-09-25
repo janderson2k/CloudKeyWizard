@@ -1889,3 +1889,65 @@ consistent with how the rest of this codebase already handles status glyphs.
 - Committed, pushed, published as `publish-v53` and GitHub Release
   [`v2.19.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.19.0) with the exe
   attached. CloudKeyWizard now 2.19.0, bundled FDT.Scout now 2.6.0.
+
+### Same session -- runs-vanish-on-interruption fixed, sync engine reliability pass
+
+Live retest of `v2.19.0` against real hardware: a run started (screenshot showed "Running", 1s
+elapsed, live metrics all zero -- the new live-dashboard code genuinely working), then on the next
+refresh the same job showed "Never run" with an empty history -- not failed, not still running, just
+gone, as if it had never been clicked. User: "I run it, refresh, and it's like 'Nope, you never ran
+it!'"
+
+**Proved the cause from the code itself, not a guess**: the running-flag-clear defer was registered
+*before* the history-recording defer in `RunLifeRaftJob`, meaning by Go's defer LIFO order the
+history write is guaranteed to fire before the running flag clears. Since the job went straight from
+"Running" to zero history with no failed entry either, the only way that's possible is if the whole
+function's normal return path never completed -- i.e. the FDT.Scout process itself died abnormally
+(crash or restart) mid-run, not a code path returning an error.
+
+**Fixed for real**, not with more UI:
+- `LifeRaftRunResult` gained a stable `ID`. `RunLifeRaftJob` now writes a durable "running" record
+  under that ID the instant it starts (`upsertLifeRaftRun`, replacing the old append-only
+  `appendLifeRaftRun`) and updates the *same* record in place when it finishes. Even a hard process
+  kill now leaves a visible, durable "stuck running" entry instead of total silence -- the frontend
+  recognizes a persisted `"running"` record with no matching live in-memory flag as **Interrupted**
+  (new status, amber pill, plain-language explanation on the card: "this run started at X but never
+  finished -- the device likely restarted mid-backup").
+- Added `recover()` around the run's own defer chain. A goroutine spawned from an HTTP handler gets
+  no automatic panic recovery from `net/http` (unlike the handler goroutine itself) -- an unrecovered
+  panic anywhere in the SMB/FTP protocol code (exercised live for the very first time this session)
+  would have taken the *entire FDT.Scout process* down silently. Now it's caught and recorded as a
+  normal failed run with the actual panic text.
+
+**Broader reliability pass, per explicit follow-up request ("go over the backup routine... make sure
+it's setup for max success")** -- reviewed the rest of the sync engine (`copyFromSource`,
+`versionExistingFile`, `pruneLifeRaftVersions`, the run lock) for the same class of gap:
+- Confirmed already crash-safe and left alone: every disk write in this engine already goes through
+  temp-file-then-rename, so a crash mid-copy can never corrupt the live mirror, only leave an orphaned
+  temp file; the run lock is a `flock` tied to the OS file descriptor, which the kernel releases
+  automatically on process death, so a crash can never leave a permanently stuck lock either.
+- Real gap found and fixed: nothing ever cleaned up those orphaned `*.liferaft-tmp` files from an
+  interrupted copy -- across repeated interruptions they'd accumulate forever, quietly eating this
+  device's own limited storage. `cleanupStrayLifeRaftTempFiles` now runs at the start of every job,
+  before connecting to the source.
+- Real gap found and fixed: a near-full `/volume` used to fail every single file individually with
+  the same "no space left on device" error, burying the actual problem in noise. A new preflight
+  check refuses to start the run at all below 0.5 GB free, with one clear error.
+- Deliberately not added: automatic retry on a failed connect. A blind retry would mask a genuine
+  configuration problem (wrong host, bad credentials) behind an extra delay rather than surfacing it
+  -- the per-file loop already tolerates individual failures without aborting the whole run, which is
+  where retry-shaped resilience actually belongs.
+
+- **Verified**: go vet/build clean, binary re-embedded/byte-confirmed, `grep -a -c` confirms
+  `FDT.Scout 2.7.0` and the new error strings (`internal error`, `liferaft-tmp`, `refusing to start a
+  run below`) present in the compiled binary. Frontend verified in the Browser pane with a mocked
+  orphaned-run record: confirmed it renders as "Interrupted" (not a misleading "Running") with the
+  plain-language explanation, confirmed the run-history table's status coloring handles a `"running"`
+  entry sensibly instead of defaulting to red/failed. C# build clean, both loose Debug and published
+  exe smoke-tested (no crash.log), stray process checked/killed first.
+- **Still not confirmed against the user's actual hardware and the exact interruption that prompted
+  this** -- built and verified by code-level proof and every means available short of that device;
+  the next real run is what confirms it end to end.
+- Committed, pushed, published as `publish-v54` and GitHub Release
+  [`v2.20.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.20.0) with the exe
+  attached. CloudKeyWizard now 2.20.0, bundled FDT.Scout now 2.7.0.
