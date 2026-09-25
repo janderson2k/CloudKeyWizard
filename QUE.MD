@@ -1729,3 +1729,54 @@ artifact -- now properly awaited.
 - Committed, pushed, published as `publish-v50` and GitHub Release
   [`v2.16.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.16.0) with the exe
   attached. CloudKeyWizard now 2.16.0, bundled FDT.Scout now 2.3.0.
+
+### Same session -- LifeRaft SMB UNC paste/browse + humanized (cron-free) scheduling
+
+User feedback on LifeRaft's SMB setup: typing host/share/path blind was clunky. Wanted to paste a
+raw UNC path (e.g. `\\10.0.2.6\Data\#Shares\UserFolders\jason.anderson\#Dev`) directly, or browse
+shares interactively. Also asked for the schedule field to be humanized -- day/week/month, a day, a
+time, a frequency -- translated to cron on the back end instead of the user hand-writing cron.
+
+**Backend** (`liferaft_smb_browse.go`, `handlers_liferaft_browse_smb.go`) -- two new functions,
+`ListSMBShares` (filters out Windows admin/hidden shares ending in `$`) and `ListSMBPath` (lists
+files/subdirs of a given share+path), both behind a new `POST /api/liferaft/browse/smb` route that
+branches on whether `share` is set in the request body. Both connect fresh per call rather than
+reusing a pooled session -- this is a config-time "audition" action, not a hot path, so the extra
+connect overhead isn't worth the complexity. Refactored the raw SMB session-opening logic out of
+`liferaft_source.go` into a shared `connectSMBSession` helper so the browse path and the actual
+sync path share one connection routine instead of two copies drifting apart.
+
+**UI** (`app.js`, `index.html`) -- `parseLifeRaftUNC()` is a pure client-side parser (no backend
+round-trip) that normalizes backslash/forward-slash mixes and leading-slash counts, then splits a
+pasted UNC string into host/share/path and fills the job form fields directly. A separate
+"Browse this share" flow drives the new backend route: pick a share, walk into folders, "Use this
+folder" fills the same fields. Verified against the user's own exact example path.
+
+The schedule field changed from a raw cron `<input>` to a picker: Frequency
+(Daily/Weekly/Monthly) + Day-of-week or Day-of-month (populated 1-28 in JS) + Time.
+`computeLifeRaftCron()` builds the 5-field cron string from those; `tryHumanizeCron()` reverse-
+parses an existing job's cron back into the picker on edit, but *only* for the exact three shapes
+this UI itself produces -- anything else (hand-written or inherited cron) falls back to an
+"Advanced" toggle that reveals the raw cron field instead of guessing wrong and showing an
+incorrect schedule.
+
+- **Verified**: `go vet`/`go build` clean under the real cross-compile target. Binary re-embedded
+  and confirmed byte-identical via `cmp`; `grep -a -c` on the compiled binary confirms both
+  `FDT.Scout 2.4.0` and `POST /api/liferaft/browse/smb` are present. Frontend exercised in the
+  Browser pane with mocked `fetch`, including the user's exact UNC example and both cron-humanize
+  directions (build and reverse-parse).
+- **Real scare, resolved**: the first smoke test of the newly published `publish-v51` exe came back
+  `EXITED/CRASHED` while an identical-source loose Debug build had just run fine -- treated as a
+  real regression per this project's own "verify before claiming fixed" discipline, not waved off.
+  Investigation found a stray `CloudKeyWizard.exe` left running from earlier testing (no
+  single-instance/mutex logic exists in this app to explain a clash, but the leftover process was
+  real and dated to earlier in the session). Killed it, re-ran the published exe three more times
+  in a row with stdout/stderr captured -- clean every time, no `crash.log`. Treated as a false
+  alarm from test-environment clutter rather than a code defect, on the strength of three
+  consecutive clean reproductions, not a theory.
+- **Not live-tested against a real SMB server** -- same standing caveat as the rest of LifeRaft:
+  the actual `ListSharenames`/`ReadDir` calls have only been verified against the library's
+  documented API shape, never against a real device.
+- Committed, pushed, published as `publish-v51` and GitHub Release
+  [`v2.17.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.17.0) with the exe
+  attached. CloudKeyWizard now 2.17.0, bundled FDT.Scout now 2.4.0.
