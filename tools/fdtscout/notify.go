@@ -151,6 +151,20 @@ func notifyMonitorUp(label, target string) {
 	notifyAsync("Monitor recovered", fmt.Sprintf("%s (%s) is responding again.", label, target))
 }
 
+func notifyLifeRaftJobProblem(jobLabel, status string, errs []string) {
+	word := "had a problem"
+	if status == "failed" {
+		word = "failed"
+	} else if status == "partial" {
+		word = "finished with errors"
+	}
+	body := fmt.Sprintf("LifeRaft job %q %s.", jobLabel, word)
+	if len(errs) > 0 {
+		body += " " + errs[0]
+	}
+	notifyAsync("LifeRaft job "+word, body)
+}
+
 func notifyDigest(metrics *MetricsCollector) {
 	history := metrics.History()
 	if len(history) == 0 {

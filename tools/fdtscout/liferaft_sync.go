@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -95,6 +96,31 @@ func appendLifeRaftRun(result LifeRaftRunResult) {
 	}
 }
 
+// liferaftRunningSet tracks which jobs are mid-run right now -- in-memory only, never persisted,
+// so it can never go stale across a restart the way a disk-backed flag could. The run lock
+// (acquireLifeRaftRunLock) already guarantees only one job runs at a time across the whole
+// device; this is purely a UI-visibility flag, not a second concurrency guard.
+var (
+	liferaftRunningMu  sync.Mutex
+	liferaftRunningSet = map[string]bool{}
+)
+
+func setLifeRaftJobRunning(jobID string, running bool) {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	if running {
+		liferaftRunningSet[jobID] = true
+	} else {
+		delete(liferaftRunningSet, jobID)
+	}
+}
+
+func IsLifeRaftJobRunning(jobID string) bool {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	return liferaftRunningSet[jobID]
+}
+
 func ListLifeRaftRuns(jobID string) []LifeRaftRunResult {
 	var runs []LifeRaftRunResult
 	if data, err := os.ReadFile(jobRunsPath(jobID)); err == nil {
@@ -112,6 +138,9 @@ func ListLifeRaftRuns(jobID string) []LifeRaftRunResult {
 // versions, and record the run. Always records a run, even a hard failure, so the run history is
 // never silently missing an attempt that actually happened.
 func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
+	setLifeRaftJobRunning(job.ID, true)
+	defer setLifeRaftJobRunning(job.ID, false) // registered first -> runs last, after the run is recorded below
+
 	result := LifeRaftRunResult{JobID: job.ID, StartedAt: time.Now().UTC()}
 	defer func() {
 		result.FinishedAt = time.Now().UTC()
@@ -124,6 +153,9 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			result.Status = "ok"
 		}
 		appendLifeRaftRun(result)
+		if job.NotifyPushbullet && result.Status != "ok" {
+			notifyLifeRaftJobProblem(job.Label, result.Status, result.Errors)
+		}
 	}()
 
 	// Refuse to run if /volume isn't a REAL mount right now -- writing into a directory a failed

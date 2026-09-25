@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.17.0";
+    public const string Version = "2.18.0";
     public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.4.0";
+    public const string BundledFdtScoutVersion = "2.5.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.18.0", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.5.0: LifeRaft's backup jobs list now shows which job is currently running, a per-job checkbox to get a Pushbullet alert whenever that job's run fails or finishes with errors, and the run history shows each run's actual duration and the real error text instead of just an error count.",
+        }),
         new("2.17.0", "2026-09-25", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.4.0: LifeRaft's SMB jobs can now be set up by pasting a UNC path (\\\\host\\share\\folder) or browsing the share interactively instead of typing host/share/path blind, and the schedule field is now a plain-language picker (Daily/Weekly/Monthly, a day, a time) that translates to cron automatically, with a raw-cron escape hatch still available.",

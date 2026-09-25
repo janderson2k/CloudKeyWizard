@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.4.0"
+	Version   = "2.5.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,13 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.5.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"LifeRaft jobs list now shows a \"Running\" indicator on a job that's mid-sync, a per-job Alert checkbox (also settable in the job form) to get a Pushbullet notification whenever that job's run finishes failed or with errors, and the run history now shows each run's actual duration and the real error text -- not just a count -- for a failed or partial run.",
+		},
+	},
 	{
 		Version: "2.4.0",
 		Date:    "2026-09-25",

@@ -37,18 +37,19 @@ func isAllowedRetention(days int) bool {
 // themselves, so they live under DataDir, not /etc (config.go's own documented split: /etc for
 // things that hold a credential directly, DataDir for everything else).
 type LifeRaftJob struct {
-	ID            string           `json:"id"`
-	Label         string           `json:"label"`
-	Protocol      LifeRaftProtocol `json:"protocol"`
-	Host          string           `json:"host"`
-	Port          int              `json:"port"`
-	Share         string           `json:"share,omitempty"` // SMB share name -- ignored for FTP/FTPS
-	Path          string           `json:"path"`            // subpath within the share (SMB) or root path (FTP) -- "/" default
-	CredentialID  string           `json:"credentialId"`
-	ScheduleCron  string           `json:"scheduleCron"` // standard 5-field cron expression
-	RetentionDays int              `json:"retentionDays"`
-	Enabled       bool             `json:"enabled"`
-	CreatedAt     time.Time        `json:"createdAt"`
+	ID               string           `json:"id"`
+	Label            string           `json:"label"`
+	Protocol         LifeRaftProtocol `json:"protocol"`
+	Host             string           `json:"host"`
+	Port             int              `json:"port"`
+	Share            string           `json:"share,omitempty"` // SMB share name -- ignored for FTP/FTPS
+	Path             string           `json:"path"`            // subpath within the share (SMB) or root path (FTP) -- "/" default
+	CredentialID     string           `json:"credentialId"`
+	ScheduleCron     string           `json:"scheduleCron"` // standard 5-field cron expression
+	RetentionDays    int              `json:"retentionDays"`
+	Enabled          bool             `json:"enabled"`
+	NotifyPushbullet bool             `json:"notifyPushbullet"` // alert via Pushbullet when a run finishes "failed" or "partial"
+	CreatedAt        time.Time        `json:"createdAt"`
 }
 
 const lifeRaftJobsFile = DataDir + "/liferaft-jobs.json"

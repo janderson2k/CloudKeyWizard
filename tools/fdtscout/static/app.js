@@ -743,6 +743,24 @@ async function deleteLifeRaftCredential(id) {
 }
 
 // -- Jobs --
+
+// Quick inline toggle from the jobs table -- re-saves the job's full record (the backend validates
+// and stores the whole thing, not a single-field patch) with just notifyPushbullet flipped.
+async function toggleLifeRaftJobNotify(job, checked) {
+  const payload = { ...job, notifyPushbullet: checked };
+  delete payload.running;
+  const res = await fetch('/api/liferaft/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    setMsg('liferaftJobMsg', false, body.error || 'failed to update alert setting');
+    loadLifeRaftJobs();
+  }
+}
+
 async function loadLifeRaftJobs() {
   const res = await fetch('/api/liferaft/jobs');
   if (!res.ok) return;
@@ -756,6 +774,7 @@ async function loadLifeRaftJobs() {
     const lastRun = runs && runs.length ? runs[0] : null;
     const lastRunText = lastRun ? `${new Date(lastRun.startedAt).toLocaleString()} (${lastRun.status})` : 'never';
     const lastRunColor = !lastRun ? '#8a92a3' : (lastRun.status === 'ok' ? '#4caf7d' : lastRun.status === 'partial' ? '#e0b050' : '#ff6b6b');
+    const runningBadge = j.running ? ' <span style="color:#4a9eff">(running)</span>' : '';
 
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted">(disabled)</span>'}</td>
@@ -763,7 +782,15 @@ async function loadLifeRaftJobs() {
       <td class="muted">${escapeHtml(cred ? cred.label : '(unknown)')}</td>
       <td class="muted">${escapeHtml(j.scheduleCron)}</td>
       <td class="muted">${liferaftRetentionLabel(j.retentionDays)}</td>
-      <td style="color:${lastRunColor}">${escapeHtml(lastRunText)}</td><td></td>`;
+      <td style="color:${lastRunColor}">${escapeHtml(lastRunText)}${runningBadge}</td><td></td><td></td>`;
+    const notifyCell = tr.children[6];
+    const notifyCheckbox = document.createElement('input');
+    notifyCheckbox.type = 'checkbox';
+    notifyCheckbox.checked = !!j.notifyPushbullet;
+    notifyCheckbox.style.width = 'auto';
+    notifyCheckbox.setAttribute('aria-label', `Notify via Pushbullet for ${j.label}`);
+    notifyCheckbox.addEventListener('change', () => toggleLifeRaftJobNotify(j, notifyCheckbox.checked));
+    notifyCell.appendChild(notifyCheckbox);
     const actionCell = tr.lastElementChild;
 
     const runBtn = document.createElement('button');
@@ -810,6 +837,16 @@ async function loadLifeRaftJobs() {
 function liferaftRetentionLabel(days) {
   const map = { 1: '1 day', 3: '3 days', 7: '7 days', 14: '2 weeks', 30: '1 month', 60: '2 months', 90: '3 months' };
   return map[days] || `${days} days`;
+}
+
+function liferaftFormatDuration(startedAt, finishedAt) {
+  if (!startedAt || !finishedAt) return '';
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 document.getElementById('liferaftJobProtocol').addEventListener('change', updateLifeRaftJobFormFields);
@@ -1063,6 +1100,7 @@ function showLifeRaftJobForm(job) {
   document.getElementById('liferaftJobUnc').value = '';
   document.getElementById('liferaftJobRetention').value = job ? String(job.retentionDays) : '7';
   document.getElementById('liferaftJobEnabled').checked = job ? job.enabled : true;
+  document.getElementById('liferaftJobNotify').checked = job ? !!job.notifyPushbullet : false;
   document.getElementById('liferaftSmbBrowsePanel').style.display = 'none';
   populateLifeRaftCredentialDropdown();
   if (job) document.getElementById('liferaftJobCredential').value = job.credentialId;
@@ -1111,6 +1149,7 @@ document.getElementById('liferaftSaveJobBtn').addEventListener('click', async ()
     scheduleCron: document.getElementById('liferaftJobSchedule').value.trim(),
     retentionDays: parseInt(document.getElementById('liferaftJobRetention').value, 10),
     enabled: document.getElementById('liferaftJobEnabled').checked,
+    notifyPushbullet: document.getElementById('liferaftJobNotify').checked,
   };
   const res = await fetch('/api/liferaft/jobs', {
     method: 'POST',
@@ -1151,11 +1190,18 @@ async function showLifeRaftRunHistory(id, label) {
   tbody.innerHTML = '';
   runs.forEach((r) => {
     const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : '#ff6b6b';
+    const duration = liferaftFormatDuration(r.startedAt, r.finishedAt);
+    let errorsCell = '';
+    if (r.errors && r.errors.length) {
+      const items = r.errors.map((e) => `<li>${escapeHtml(e)}</li>`).join('');
+      errorsCell = `<details><summary class="muted">${r.errors.length} error(s)</summary><ul style="margin:4px 0 0 16px;padding:0">${items}</ul></details>`;
+    }
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${escapeHtml(new Date(r.startedAt).toLocaleString())}</td>
       <td style="color:${statusColor}">${escapeHtml(r.status)}</td>
+      <td class="muted">${duration}</td>
       <td>${r.filesAdded}</td><td>${r.filesChanged}</td><td>${r.filesDeleted}</td><td>${r.versionsPruned}</td>
-      <td class="muted">${r.errors && r.errors.length ? r.errors.length + ' error(s)' : ''}</td>`;
+      <td>${errorsCell}</td>`;
     tbody.appendChild(tr);
   });
 }

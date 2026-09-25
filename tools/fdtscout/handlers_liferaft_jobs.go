@@ -6,14 +6,25 @@ import (
 	"net/http"
 )
 
+// lifeRaftJobView adds the in-memory "is this job running right now" flag alongside the persisted
+// job fields -- a UI-visibility concern only, so it doesn't belong on the stored LifeRaftJob itself.
+type lifeRaftJobView struct {
+	LifeRaftJob
+	Running bool `json:"running"`
+}
+
 func handleLifeRaftJobsList(w http.ResponseWriter, r *http.Request, _ string) {
 	jobs, err := ListLifeRaftJobs()
 	if err != nil {
 		http.Error(w, `{"error":"`+jsonEscape(err.Error())+`"}`, http.StatusInternalServerError)
 		return
 	}
+	views := make([]lifeRaftJobView, len(jobs))
+	for i, j := range jobs {
+		views[i] = lifeRaftJobView{LifeRaftJob: j, Running: IsLifeRaftJobRunning(j.ID)}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jobs)
+	json.NewEncoder(w).Encode(views)
 }
 
 func handleLifeRaftJobsSave(w http.ResponseWriter, r *http.Request, _ string) {

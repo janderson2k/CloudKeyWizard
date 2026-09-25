@@ -317,7 +317,7 @@
 
         <h3 style="margin-top:24px">Backup jobs</h3>
         <table class="data-table" id="liferaftJobsTable">
-          <thead><tr><th>Label</th><th>Source</th><th>Credential</th><th>Schedule</th><th>Retention</th><th>Last run</th><th></th></tr></thead>
+          <thead><tr><th>Label</th><th>Source</th><th>Credential</th><th>Schedule</th><th>Retention</th><th>Last run</th><th>Alert</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
         <button id="liferaftAddJobBtn" class="secondary">Add job</button>
@@ -389,6 +389,7 @@
             </select>
           </label>
           <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="liferaftJobEnabled" checked style="width:auto"> Enabled</label>
+          <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="liferaftJobNotify" style="width:auto"> Notify via Pushbullet if a run fails or finishes with errors</label>
           <div style="margin-top:8px">
             <button id="liferaftSaveJobBtn">Save job</button>
             <button id="liferaftCancelJobBtn" class="secondary">Cancel</button>
@@ -399,7 +400,7 @@
         <div id="liferaftRunHistory" style="display:none;margin-top:16px">
           <h3>Run history -- <span id="liferaftRunHistoryJobLabel"></span></h3>
           <table class="data-table" id="liferaftRunsTable">
-            <thead><tr><th>Started</th><th>Status</th><th>Added</th><th>Changed</th><th>Deleted</th><th>Pruned</th><th>Errors</th></tr></thead>
+            <thead><tr><th>Started</th><th>Status</th><th>Duration</th><th>Added</th><th>Changed</th><th>Deleted</th><th>Pruned</th><th>Errors</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
