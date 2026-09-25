@@ -5,8 +5,8 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.2.0"
-	BuildDate = "2026-08-28"
+	Version   = "2.3.0"
+	BuildDate = "2026-09-25"
 )
 
 type ChangelogEntry struct {
@@ -16,6 +16,13 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.3.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"New tab: LifeRaft -- read-only pull backups from SMB/FTP/FTPS sources onto this device's own storage, so if the worst happens you can grab this box out of the rack and still have your stuff. Credentials are saved once and reusable across any number of jobs. Every job keeps its live mirror forever; a changed or source-deleted file is protected (moved aside, never overwritten) for a retention window you pick per job (1 day up to 3 months). Backups run one at a time device-wide so multiple jobs never overwhelm a source or trigger an account lockout. A guided wizard sets up dedicated storage at /volume if it isn't already there -- same safety picker (mounted/boot-flash/secure-partition drives are never selectable) CloudKeyWizard's own storage step already uses. Includes a read-only file browser for downloading your stuff back out -- LifeRaft never writes back to a source, so restoring there is on you, by design.",
+		},
+	},
 	{
 		Version: "2.2.0",
 		Date:    "2026-08-28",

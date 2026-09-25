@@ -1,0 +1,201 @@
+package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+
+	smb2 "github.com/hirochachacha/go-smb2"
+	"github.com/jlaffaye/ftp"
+)
+
+// This file is the actual read-only enforcement boundary. Both underlying libraries expose full
+// read-write clients -- go-smb2's *Share has Create/Write/Remove/RemoveAll/Rename, and
+// *ftp.ServerConn has Stor/StorFrom/Append/Delete/Rename/MakeDir/RemoveDir* -- verified directly
+// against each package's real API (`go doc`), not assumed. Nothing in this codebase outside this
+// file ever holds a reference to either of those types: the sync engine only ever sees the narrow
+// sourceReader interface below, which has no write method to call even by mistake. That's the
+// actual guarantee LifeRaft makes about never writing back to a source -- a code-level chokepoint,
+// the same discipline resolveSafePath already applies to the USB file browser.
+
+const sourceConnectTimeout = 15 * time.Second
+
+// sourceEntry is one file found while listing a source -- directories are never returned
+// themselves, only implied by the paths of the files inside them, since LifeRaft only ever mirrors
+// files, never empty directory structure.
+type sourceEntry struct {
+	Path    string // forward-slash relative path from the job's configured root, e.g. "Documents/report.docx"
+	Size    int64
+	ModTime time.Time
+}
+
+// sourceReader is the ONLY thing the sync engine (liferaft_sync.go) is ever given -- see the file
+// comment above for why that matters.
+type sourceReader interface {
+	// List returns the immediate children of dir ("" = the job's own root), both files and
+	// subdirectories, so the sync engine can recurse itself the same way for either protocol.
+	List(dir string) (files []sourceEntry, subdirs []string, err error)
+	Open(relPath string) (io.ReadCloser, error)
+	Close() error
+}
+
+func connectLifeRaftSource(job LifeRaftJob) (sourceReader, error) {
+	username, domain, password, err := DecryptedLifeRaftCredential(job.CredentialID)
+	if err != nil {
+		return nil, fmt.Errorf("credential: %w", err)
+	}
+	switch job.Protocol {
+	case ProtocolSMB:
+		return connectSMBSource(job, username, domain, password)
+	case ProtocolFTP:
+		return connectFTPSource(job, username, password, false)
+	case ProtocolFTPS:
+		return connectFTPSource(job, username, password, true)
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %s", job.Protocol)
+	}
+}
+
+// --- SMB -----------------------------------------------------------------------------------
+
+type smbSource struct {
+	conn    net.Conn
+	session *smb2.Session
+	share   *smb2.Share // never exposed outside this file
+}
+
+func connectSMBSource(job LifeRaftJob, username, domain, password string) (sourceReader, error) {
+	addr := net.JoinHostPort(job.Host, strconv.Itoa(job.Port))
+	conn, err := net.DialTimeout("tcp", addr, sourceConnectTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	}
+	d := &smb2.Dialer{Initiator: &smb2.NTLMInitiator{User: username, Password: password, Domain: domain}}
+	session, err := d.Dial(conn)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("SMB session setup failed: %w", err)
+	}
+	share, err := session.Mount(job.Share)
+	if err != nil {
+		session.Logoff()
+		conn.Close()
+		return nil, fmt.Errorf("mounting share %q failed: %w", job.Share, err)
+	}
+	return &smbSource{conn: conn, session: session, share: share}, nil
+}
+
+func (s *smbSource) List(dir string) ([]sourceEntry, []string, error) {
+	full := smbJoin(dir)
+	entries, err := s.share.ReadDir(full)
+	if err != nil {
+		return nil, nil, err
+	}
+	var files []sourceEntry
+	var subdirs []string
+	for _, e := range entries {
+		rel := path.Join(dir, e.Name())
+		if e.IsDir() {
+			subdirs = append(subdirs, rel)
+			continue
+		}
+		files = append(files, sourceEntry{Path: rel, Size: e.Size(), ModTime: e.ModTime()})
+	}
+	return files, subdirs, nil
+}
+
+func (s *smbSource) Open(relPath string) (io.ReadCloser, error) {
+	return s.share.Open(smbJoin(relPath))
+}
+
+func (s *smbSource) Close() error {
+	s.share.Umount()
+	s.session.Logoff()
+	return s.conn.Close()
+}
+
+// smbJoin converts a forward-slash relative path into the backslash form go-smb2 expects.
+func smbJoin(relPath string) string {
+	if relPath == "" {
+		return ""
+	}
+	return strings.ReplaceAll(relPath, "/", string(smb2.PathSeparator))
+}
+
+// --- FTP / FTPS ------------------------------------------------------------------------------
+
+type ftpSource struct {
+	conn *ftp.ServerConn
+	root string // job.Path, so List/Open can be called with paths relative to the job's own root
+}
+
+func connectFTPSource(job LifeRaftJob, username, password string, useTLS bool) (sourceReader, error) {
+	addr := net.JoinHostPort(job.Host, strconv.Itoa(job.Port))
+	opts := []ftp.DialOption{ftp.DialWithTimeout(sourceConnectTimeout)}
+	if useTLS {
+		// InsecureSkipVerify is deliberate here, not an oversight: a home/office NAS's FTPS
+		// certificate is very often self-signed, and LifeRaft has no existing mechanism for the
+		// user to pin a source's cert the way CloudKeyWizard/FDT.Scout's own TLS listener is
+		// pinned by the browser. Read-only credentials over an encrypted-but-unverified channel is
+		// still materially better than plain FTP; full cert pinning for sources is a real gap
+		// worth closing in a later pass, not this one.
+		opts = append(opts, ftp.DialWithExplicitTLS(&tls.Config{InsecureSkipVerify: true}))
+	}
+	conn, err := ftp.Dial(addr, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	}
+	if err := conn.Login(username, password); err != nil {
+		conn.Quit()
+		return nil, fmt.Errorf("login failed: %w", err)
+	}
+	root := job.Path
+	if root == "" {
+		root = "/"
+	}
+	return &ftpSource{conn: conn, root: root}, nil
+}
+
+func (s *ftpSource) List(dir string) ([]sourceEntry, []string, error) {
+	full := path.Join(s.root, dir)
+	entries, err := s.conn.List(full)
+	if err != nil {
+		return nil, nil, err
+	}
+	var files []sourceEntry
+	var subdirs []string
+	for _, e := range entries {
+		if e.Name == "." || e.Name == ".." {
+			continue
+		}
+		rel := path.Join(dir, e.Name)
+		switch e.Type {
+		case ftp.EntryTypeFolder:
+			subdirs = append(subdirs, rel)
+		case ftp.EntryTypeFile:
+			files = append(files, sourceEntry{Path: rel, Size: int64(e.Size), ModTime: e.Time})
+		// EntryTypeLink and anything else is deliberately skipped -- following a symlink on an FTP
+		// server this app doesn't control risks walking outside the intended tree entirely.
+		default:
+		}
+	}
+	return files, subdirs, nil
+}
+
+func (s *ftpSource) Open(relPath string) (io.ReadCloser, error) {
+	full := path.Join(s.root, relPath)
+	resp, err := s.conn.Retr(full)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (s *ftpSource) Close() error {
+	return s.conn.Quit()
+}

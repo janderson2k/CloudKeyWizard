@@ -7,8 +7,8 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.15.0";
-    public const string BuildDate = "2026-08-28";
+    public const string Version = "2.16.0";
+    public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
     /// fdtscout-arm64) -- must be bumped by hand alongside tools/fdtscout/version.go's own Version
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.2.0";
+    public const string BundledFdtScoutVersion = "2.3.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.16.0", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.3.0: new LifeRaft tab -- read-only pull backups from SMB/FTP/FTPS sources onto the device's own storage, so if the worst happens you can grab the Cloud Key out of the rack and still have your stuff. Saved credentials are reusable across any number of jobs. The live mirror is kept forever; a changed or source-deleted file is protected (never overwritten in place) for a retention window you pick per job. Jobs run one at a time device-wide so they never overwhelm a source or trigger an account lockout. A guided wizard sets up dedicated storage if /volume isn't already there, using the same mounted/boot-flash/secure-partition safety picker this app's own storage step already uses. Includes a read-only file browser for downloading your stuff back out -- LifeRaft never writes back to a source.",
+        }),
         new("2.15.0", "2026-08-28", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.2.0: you can now join a tailnet right from its Settings tab -- an auth key joins instantly, or \"Join via browser\" shows an approval link and QR code and auto-detects when you finish, with a Leave tailnet button too. Installing Tailscale itself is still done from the Apps tab; this is the configure-it-afterward step that previously needed the terminal. Also: each watched host on the Monitoring tab can now opt into its own Pushbullet notification when it goes down or recovers.",

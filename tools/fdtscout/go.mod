@@ -8,4 +8,10 @@ require (
 	golang.org/x/crypto v0.55.0
 )
 
-require golang.org/x/image v0.45.0
+require (
+	github.com/hirochachacha/go-smb2 v1.1.0
+	github.com/jlaffaye/ftp v0.2.4
+	golang.org/x/image v0.45.0
+)
+
+require github.com/geoffgarside/ber v1.1.0 // indirect

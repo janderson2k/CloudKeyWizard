@@ -36,6 +36,7 @@ var staticFiles embed.FS
 func main() {
 	bootstrapAdmin := flag.Bool("bootstrap-admin", false, "create/replace the single admin account from ADMIN_USERNAME/ADMIN_PASSWORD env vars, then exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	lifeRaftRunJobID := flag.String("liferaft-run", "", "run one LifeRaft backup job by ID, then exit -- invoked by cron, not meant to be run by hand")
 	flag.Parse()
 
 	// Lets CloudKeyWizard check what's actually installed on an already-converted device (over SSH,
@@ -44,6 +45,15 @@ func main() {
 	// works even without proper permissions on /opt/fdtscout/data.
 	if *showVersion {
 		fmt.Println(Version)
+		return
+	}
+
+	// Cron invokes this directly (see syncLifeRaftCrontab) rather than the whole HTTP server
+	// starting up just to run one backup job -- checked before ensureDirs()/user-store loading
+	// for the same reason -version is: a scheduled job shouldn't depend on anything the full
+	// server startup path needs but a one-shot CLI run doesn't.
+	if *lifeRaftRunJobID != "" {
+		runLifeRaftScheduledJob(*lifeRaftRunJobID)
 		return
 	}
 
@@ -219,6 +229,22 @@ func runServer(users *UserStore) {
 	mux.HandleFunc("GET /api/tailscale", requireAuth(sessions, true, handleTailscaleStatus))
 	mux.HandleFunc("POST /api/tailscale/join", requireAuth(sessions, true, handleTailscaleJoin))
 	mux.HandleFunc("POST /api/tailscale/logout", requireAuth(sessions, true, handleTailscaleLogout))
+
+	// LifeRaft: read-only SMB/FTP pull backups onto this device's own /volume storage. Storage
+	// setup first -- everything else in this feature depends on /volume actually being mounted.
+	mux.HandleFunc("GET /api/liferaft/storage", requireAuth(sessions, true, handleLifeRaftStorageStatus))
+	mux.HandleFunc("GET /api/liferaft/storage/drives", requireAuth(sessions, true, handleLifeRaftDrivesList))
+	mux.HandleFunc("POST /api/liferaft/storage/setup", requireAuth(sessions, true, handleLifeRaftStorageSetup))
+	mux.HandleFunc("GET /api/liferaft/credentials", requireAuth(sessions, true, handleLifeRaftCredentialsList))
+	mux.HandleFunc("POST /api/liferaft/credentials", requireAuth(sessions, true, handleLifeRaftCredentialsSave))
+	mux.HandleFunc("DELETE /api/liferaft/credentials/{id}", requireAuth(sessions, true, handleLifeRaftCredentialsDelete))
+	mux.HandleFunc("GET /api/liferaft/jobs", requireAuth(sessions, true, handleLifeRaftJobsList))
+	mux.HandleFunc("POST /api/liferaft/jobs", requireAuth(sessions, true, handleLifeRaftJobsSave))
+	mux.HandleFunc("DELETE /api/liferaft/jobs/{id}", requireAuth(sessions, true, handleLifeRaftJobsDelete))
+	mux.HandleFunc("POST /api/liferaft/jobs/{id}/run", requireAuth(sessions, true, handleLifeRaftJobRunNow))
+	mux.HandleFunc("GET /api/liferaft/jobs/{id}/runs", requireAuth(sessions, true, handleLifeRaftJobRuns))
+	mux.HandleFunc("GET /api/liferaft/jobs/{id}/files", requireAuth(sessions, true, handleLifeRaftFilesList))
+	mux.HandleFunc("GET /api/liferaft/jobs/{id}/download", requireAuth(sessions, true, handleLifeRaftFileDownload))
 
 	// Active scouting: IP range scan + port scan, both user-triggered only, never scheduled.
 	mux.HandleFunc("GET /api/scan/subnet", requireAuth(sessions, true, handleScanSubnet))

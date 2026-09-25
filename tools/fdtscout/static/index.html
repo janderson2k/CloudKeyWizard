@@ -21,6 +21,7 @@
     <button class="tab" data-tab="monitoring">Monitoring</button>
     <button class="tab" data-tab="apps">Apps</button>
     <button class="tab" data-tab="docker">Docker</button>
+    <button class="tab" data-tab="liferaft">LifeRaft</button>
     <button class="tab" data-tab="users">Users</button>
     <button class="tab" data-tab="certs">Certificates</button>
     <button class="tab" data-tab="lcd">Front Panel</button>
@@ -268,6 +269,112 @@
           <button type="submit">Pull &amp; run</button>
         </form>
         <pre id="dockerRunOutput" class="term-output" style="display:none;margin-top:10px;max-height:320px"></pre>
+      </div>
+    </section>
+
+    <section id="panel-liferaft" class="panel">
+      <h2>LifeRaft</h2>
+      <p class="muted">Read-only pull backups from SMB/FTP sources onto this device's own storage -- so if the worst happens, you can grab this box out of the rack and still have your stuff. LifeRaft never writes back to a source: only reads. Deleted or changed files are kept, not overwritten, for the retention window you set per job; the live mirror itself is kept forever.</p>
+
+      <div id="liferaftNotReady" style="display:none">
+        <h3 style="margin-top:0">Set up storage first</h3>
+        <p>LifeRaft needs a dedicated drive mounted at <code>/volume</code> before it can back anything up. This will <strong>wipe</strong> whichever drive you pick -- pick carefully.</p>
+        <table class="data-table" id="liferaftDrivesTable">
+          <thead><tr><th></th><th>Device</th><th>Size</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="liferaftRefreshDrivesBtn" class="secondary">Refresh drive list</button>
+        <div id="liferaftSetupForm" style="display:none;margin-top:10px" class="info-block">
+          <p>Selected: <strong id="liferaftSelectedDrive"></strong> -- this will erase everything on it.</p>
+          <label>Type the device name (e.g. <code id="liferaftConfirmExample"></code>) to confirm<input type="text" id="liferaftConfirmInput"></label>
+          <button id="liferaftConfirmSetupBtn">Wipe &amp; set up as /volume</button>
+        </div>
+        <p id="liferaftSetupMsg" class="msg"></p>
+      </div>
+
+      <div id="liferaftReady" style="display:none">
+        <div id="liferaftStorageStatus" class="info-block"></div>
+
+        <h3 style="margin-top:24px">Credentials</h3>
+        <p class="muted">One saved login can back any number of jobs against the same source.</p>
+        <table class="data-table" id="liferaftCredsTable">
+          <thead><tr><th>Label</th><th>Username</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="liferaftAddCredBtn" class="secondary">Add credential</button>
+        <div id="liferaftCredForm" style="display:none;margin-top:10px" class="info-block">
+          <input type="hidden" id="liferaftCredId">
+          <label>Label<input type="text" id="liferaftCredLabel" placeholder="e.g. Synology backup-ro"></label>
+          <label>Username<input type="text" id="liferaftCredUsername"></label>
+          <label>Domain (optional, SMB only)<input type="text" id="liferaftCredDomain"></label>
+          <label>Password<input type="password" id="liferaftCredPassword" placeholder="leave blank to keep unchanged when editing"></label>
+          <div style="margin-top:8px">
+            <button id="liferaftSaveCredBtn">Save credential</button>
+            <button id="liferaftCancelCredBtn" class="secondary">Cancel</button>
+          </div>
+        </div>
+        <p id="liferaftCredMsg" class="msg"></p>
+
+        <h3 style="margin-top:24px">Backup jobs</h3>
+        <table class="data-table" id="liferaftJobsTable">
+          <thead><tr><th>Label</th><th>Source</th><th>Credential</th><th>Schedule</th><th>Retention</th><th>Last run</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="liferaftAddJobBtn" class="secondary">Add job</button>
+        <div id="liferaftJobForm" style="display:none;margin-top:10px" class="info-block">
+          <input type="hidden" id="liferaftJobId">
+          <label>Label<input type="text" id="liferaftJobLabel" placeholder="e.g. Synology - Documents"></label>
+          <label>Protocol
+            <select id="liferaftJobProtocol">
+              <option value="smb">SMB</option>
+              <option value="ftp">FTP</option>
+              <option value="ftps">FTPS (explicit TLS)</option>
+            </select>
+          </label>
+          <label>Host<input type="text" id="liferaftJobHost" placeholder="10.0.100.40"></label>
+          <label>Port<input type="number" id="liferaftJobPort" placeholder="default: 445 for SMB, 21 for FTP/FTPS"></label>
+          <label id="liferaftJobShareLabel">Share name (SMB)<input type="text" id="liferaftJobShare" placeholder="Documents"></label>
+          <label>Path within the share/server<input type="text" id="liferaftJobPath" placeholder="/ (default: everything)"></label>
+          <label>Credential
+            <select id="liferaftJobCredential"></select>
+          </label>
+          <label>Schedule (5-field cron)<input type="text" id="liferaftJobSchedule" value="0 3 * * *" placeholder="0 3 * * * = 3am daily"></label>
+          <label>Retention for changed/deleted files
+            <select id="liferaftJobRetention">
+              <option value="1">1 day</option>
+              <option value="3">3 days</option>
+              <option value="7" selected>7 days</option>
+              <option value="14">2 weeks</option>
+              <option value="30">1 month</option>
+              <option value="60">2 months</option>
+              <option value="90">3 months</option>
+            </select>
+          </label>
+          <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="liferaftJobEnabled" checked style="width:auto"> Enabled</label>
+          <div style="margin-top:8px">
+            <button id="liferaftSaveJobBtn">Save job</button>
+            <button id="liferaftCancelJobBtn" class="secondary">Cancel</button>
+          </div>
+        </div>
+        <p id="liferaftJobMsg" class="msg"></p>
+
+        <div id="liferaftRunHistory" style="display:none;margin-top:16px">
+          <h3>Run history -- <span id="liferaftRunHistoryJobLabel"></span></h3>
+          <table class="data-table" id="liferaftRunsTable">
+            <thead><tr><th>Started</th><th>Status</th><th>Added</th><th>Changed</th><th>Deleted</th><th>Pruned</th><th>Errors</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div id="liferaftBrowser" style="display:none;margin-top:16px">
+          <h3>Browse -- <span id="liferaftBrowserJobLabel"></span></h3>
+          <p class="muted">Read-only. Download files from the live mirror; LifeRaft never writes back to the source, so restoring there is on you.</p>
+          <p><button id="liferaftBrowserUpBtn" class="secondary">.. Up</button> <span id="liferaftBrowserPath" class="muted"></span></p>
+          <table class="data-table" id="liferaftBrowserTable">
+            <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

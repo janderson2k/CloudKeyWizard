@@ -30,6 +30,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     if (btn.dataset.tab === 'monitoring') loadMonitoringTab();
     if (btn.dataset.tab === 'apps') loadApps();
     if (btn.dataset.tab === 'docker') loadDockerTab();
+    if (btn.dataset.tab === 'liferaft') loadLifeRaftTab();
     if (btn.dataset.tab === 'users') loadUsers();
     if (btn.dataset.tab === 'certs') { loadCertInfo(); loadConfig(); }
     if (btn.dataset.tab === 'lcd') { loadLCDStatus(); loadDisplayConfig(); }
@@ -560,6 +561,419 @@ document.getElementById('dockerRunForm').addEventListener('submit', async (e) =>
     submitBtn.textContent = 'Pull & run';
   }
 });
+
+// ---- LifeRaft ----------------------------------------------------------
+// Read-only pull backups from SMB/FTP sources onto this device's own /volume storage. Storage
+// setup first (everything else depends on /volume existing), then credentials (reusable across
+// jobs), then jobs themselves, then per-job run history and a read-only file browser -- no
+// restore-to-source, by design; the browser is how you get your stuff back out.
+let liferaftCredsCache = [];
+let liferaftDrivesCache = [];
+let liferaftCurrentBrowseJob = null;
+let liferaftCurrentBrowsePath = '';
+
+async function loadLifeRaftTab() {
+  const res = await fetch('/api/liferaft/storage');
+  if (!res.ok) return;
+  const status = await res.json();
+  document.getElementById('liferaftNotReady').style.display = status.ready ? 'none' : '';
+  document.getElementById('liferaftReady').style.display = status.ready ? '' : 'none';
+  if (!status.ready) {
+    await loadLifeRaftDrives();
+    return;
+  }
+  const el = document.getElementById('liferaftStorageStatus');
+  el.innerHTML = `
+    <div>Storage: <strong style="color:#4caf7d">Ready</strong> -- ${escapeHtml(status.device || '/volume')}</div>
+    <div>${status.freeGb != null ? status.freeGb.toFixed(1) : '?'} GB free of ${status.totalGb != null ? status.totalGb.toFixed(1) : '?'} GB -- LifeRaft is using ${(status.usedByLifeRaftGb || 0).toFixed(2)} GB</div>
+  `;
+  await loadLifeRaftCredentials();
+  await loadLifeRaftJobs();
+}
+
+// -- Storage setup wizard --
+async function loadLifeRaftDrives() {
+  const res = await fetch('/api/liferaft/storage/drives');
+  const tbody = document.querySelector('#liferaftDrivesTable tbody');
+  tbody.innerHTML = '';
+  if (!res.ok) return;
+  liferaftDrivesCache = await res.json();
+  liferaftDrivesCache.forEach((d) => {
+    const tr = document.createElement('tr');
+    const canSelect = d.risk === 'recommended';
+    const statusColor = canSelect ? '#4caf7d' : '#ff6b6b';
+    tr.innerHTML = `<td></td><td>${escapeHtml(d.path)}</td><td>${escapeHtml(d.size)}</td><td style="color:${statusColor}">${escapeHtml(d.riskReason)}</td>`;
+    const radioCell = tr.firstElementChild;
+    if (canSelect) {
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'liferaftDrive';
+      radio.addEventListener('change', () => selectLifeRaftDrive(d));
+      radioCell.appendChild(radio);
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+function selectLifeRaftDrive(drive) {
+  document.getElementById('liferaftSetupForm').style.display = '';
+  document.getElementById('liferaftSelectedDrive').textContent = `${drive.path} (${drive.size})`;
+  document.getElementById('liferaftConfirmExample').textContent = drive.name;
+  document.getElementById('liferaftConfirmInput').value = '';
+  document.getElementById('liferaftConfirmInput').dataset.device = drive.name;
+}
+
+document.getElementById('liferaftRefreshDrivesBtn').addEventListener('click', loadLifeRaftDrives);
+
+document.getElementById('liferaftConfirmSetupBtn').addEventListener('click', async () => {
+  const input = document.getElementById('liferaftConfirmInput');
+  const device = input.dataset.device;
+  const confirmVal = input.value.trim();
+  if (!confirmVal) {
+    setMsg('liferaftSetupMsg', false, 'Type the device name to confirm.');
+    return;
+  }
+  const btn = document.getElementById('liferaftConfirmSetupBtn');
+  btn.disabled = true;
+  btn.textContent = 'Wiping and formatting... (do not close this page)';
+  try {
+    const res = await fetch('/api/liferaft/storage/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device, confirm: confirmVal }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setMsg('liferaftSetupMsg', true, 'Storage ready.');
+      loadLifeRaftTab();
+    } else {
+      setMsg('liferaftSetupMsg', false, body.error || 'failed');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Wipe & set up as /volume';
+  }
+});
+
+// -- Credentials --
+async function loadLifeRaftCredentials() {
+  const res = await fetch('/api/liferaft/credentials');
+  if (!res.ok) return;
+  liferaftCredsCache = await res.json();
+  const tbody = document.querySelector('#liferaftCredsTable tbody');
+  tbody.innerHTML = '';
+  liferaftCredsCache.forEach((c) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escapeHtml(c.label)}</td><td class="muted">${escapeHtml(c.username)}</td><td></td>`;
+    const actionCell = tr.lastElementChild;
+    const editBtn = document.createElement('button');
+    editBtn.className = 'link-btn';
+    editBtn.style.color = '#4a9eff';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', () => showLifeRaftCredForm(c));
+    actionCell.appendChild(editBtn);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'link-btn';
+    delBtn.style.marginLeft = '10px';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => deleteLifeRaftCredential(c.id));
+    actionCell.appendChild(delBtn);
+    tbody.appendChild(tr);
+  });
+  populateLifeRaftCredentialDropdown();
+}
+
+function populateLifeRaftCredentialDropdown() {
+  const sel = document.getElementById('liferaftJobCredential');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  liferaftCredsCache.forEach((c) => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.label;
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+}
+
+function showLifeRaftCredForm(cred) {
+  document.getElementById('liferaftCredForm').style.display = '';
+  document.getElementById('liferaftCredId').value = cred ? cred.id : '';
+  document.getElementById('liferaftCredLabel').value = cred ? cred.label : '';
+  document.getElementById('liferaftCredUsername').value = cred ? cred.username : '';
+  document.getElementById('liferaftCredDomain').value = cred ? (cred.domain || '') : '';
+  document.getElementById('liferaftCredPassword').value = '';
+  document.getElementById('liferaftCredPassword').placeholder = cred ? 'leave blank to keep unchanged' : 'required for a new credential';
+}
+
+document.getElementById('liferaftAddCredBtn').addEventListener('click', () => showLifeRaftCredForm(null));
+document.getElementById('liferaftCancelCredBtn').addEventListener('click', () => {
+  document.getElementById('liferaftCredForm').style.display = 'none';
+});
+
+document.getElementById('liferaftSaveCredBtn').addEventListener('click', async () => {
+  const payload = {
+    id: document.getElementById('liferaftCredId').value,
+    label: document.getElementById('liferaftCredLabel').value.trim(),
+    username: document.getElementById('liferaftCredUsername').value.trim(),
+    domain: document.getElementById('liferaftCredDomain').value.trim(),
+    password: document.getElementById('liferaftCredPassword').value,
+  };
+  const res = await fetch('/api/liferaft/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) {
+    document.getElementById('liferaftCredForm').style.display = 'none';
+    setMsg('liferaftCredMsg', true, 'Saved.');
+    loadLifeRaftCredentials();
+  } else {
+    setMsg('liferaftCredMsg', false, body.error || 'failed');
+  }
+});
+
+async function deleteLifeRaftCredential(id) {
+  if (!confirm('Delete this credential? Jobs still using it will block the delete.')) return;
+  const res = await fetch(`/api/liferaft/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const body = await res.json().catch(() => ({}));
+  setMsg('liferaftCredMsg', res.ok, res.ok ? 'Deleted.' : (body.error || 'failed'));
+  if (res.ok) loadLifeRaftCredentials();
+}
+
+// -- Jobs --
+async function loadLifeRaftJobs() {
+  const res = await fetch('/api/liferaft/jobs');
+  if (!res.ok) return;
+  const jobs = await res.json();
+  const tbody = document.querySelector('#liferaftJobsTable tbody');
+  tbody.innerHTML = '';
+  for (const j of jobs) {
+    const cred = liferaftCredsCache.find((c) => c.id === j.credentialId);
+    const source = j.protocol === 'smb' ? `${j.host}/${j.share}${j.path && j.path !== '/' ? j.path : ''}` : `${j.host}${j.path || '/'}`;
+    const runs = await fetch(`/api/liferaft/jobs/${encodeURIComponent(j.id)}/runs`).then((r) => r.ok ? r.json() : []);
+    const lastRun = runs && runs.length ? runs[0] : null;
+    const lastRunText = lastRun ? `${new Date(lastRun.startedAt).toLocaleString()} (${lastRun.status})` : 'never';
+    const lastRunColor = !lastRun ? '#8a92a3' : (lastRun.status === 'ok' ? '#4caf7d' : lastRun.status === 'partial' ? '#e0b050' : '#ff6b6b');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted">(disabled)</span>'}</td>
+      <td class="muted">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)}</td>
+      <td class="muted">${escapeHtml(cred ? cred.label : '(unknown)')}</td>
+      <td class="muted">${escapeHtml(j.scheduleCron)}</td>
+      <td class="muted">${liferaftRetentionLabel(j.retentionDays)}</td>
+      <td style="color:${lastRunColor}">${escapeHtml(lastRunText)}</td><td></td>`;
+    const actionCell = tr.lastElementChild;
+
+    const runBtn = document.createElement('button');
+    runBtn.className = 'link-btn';
+    runBtn.style.color = '#4a9eff';
+    runBtn.textContent = 'Run now';
+    runBtn.addEventListener('click', () => runLifeRaftJobNow(j.id, j.label));
+    actionCell.appendChild(runBtn);
+
+    const historyBtn = document.createElement('button');
+    historyBtn.className = 'link-btn';
+    historyBtn.style.marginLeft = '8px';
+    historyBtn.style.color = '#4a9eff';
+    historyBtn.textContent = 'History';
+    historyBtn.addEventListener('click', () => showLifeRaftRunHistory(j.id, j.label));
+    actionCell.appendChild(historyBtn);
+
+    const browseBtn = document.createElement('button');
+    browseBtn.className = 'link-btn';
+    browseBtn.style.marginLeft = '8px';
+    browseBtn.style.color = '#4a9eff';
+    browseBtn.textContent = 'Browse';
+    browseBtn.addEventListener('click', () => openLifeRaftBrowser(j.id, j.label));
+    actionCell.appendChild(browseBtn);
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'link-btn';
+    editBtn.style.marginLeft = '8px';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', () => showLifeRaftJobForm(j));
+    actionCell.appendChild(editBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'link-btn';
+    delBtn.style.marginLeft = '8px';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => deleteLifeRaftJob(j.id));
+    actionCell.appendChild(delBtn);
+
+    tbody.appendChild(tr);
+  }
+}
+
+function liferaftRetentionLabel(days) {
+  const map = { 1: '1 day', 3: '3 days', 7: '7 days', 14: '2 weeks', 30: '1 month', 60: '2 months', 90: '3 months' };
+  return map[days] || `${days} days`;
+}
+
+document.getElementById('liferaftJobProtocol').addEventListener('change', updateLifeRaftJobFormFields);
+function updateLifeRaftJobFormFields() {
+  const proto = document.getElementById('liferaftJobProtocol').value;
+  document.getElementById('liferaftJobShareLabel').style.display = proto === 'smb' ? '' : 'none';
+}
+updateLifeRaftJobFormFields();
+
+function showLifeRaftJobForm(job) {
+  document.getElementById('liferaftJobForm').style.display = '';
+  document.getElementById('liferaftJobId').value = job ? job.id : '';
+  document.getElementById('liferaftJobLabel').value = job ? job.label : '';
+  document.getElementById('liferaftJobProtocol').value = job ? job.protocol : 'smb';
+  document.getElementById('liferaftJobHost').value = job ? job.host : '';
+  document.getElementById('liferaftJobPort').value = job ? job.port : '';
+  document.getElementById('liferaftJobShare').value = job ? (job.share || '') : '';
+  document.getElementById('liferaftJobPath').value = job ? job.path : '/';
+  document.getElementById('liferaftJobSchedule').value = job ? job.scheduleCron : '0 3 * * *';
+  document.getElementById('liferaftJobRetention').value = job ? String(job.retentionDays) : '7';
+  document.getElementById('liferaftJobEnabled').checked = job ? job.enabled : true;
+  populateLifeRaftCredentialDropdown();
+  if (job) document.getElementById('liferaftJobCredential').value = job.credentialId;
+  updateLifeRaftJobFormFields();
+}
+
+document.getElementById('liferaftAddJobBtn').addEventListener('click', () => {
+  if (liferaftCredsCache.length === 0) {
+    setMsg('liferaftJobMsg', false, 'Add a credential first.');
+    return;
+  }
+  showLifeRaftJobForm(null);
+});
+document.getElementById('liferaftCancelJobBtn').addEventListener('click', () => {
+  document.getElementById('liferaftJobForm').style.display = 'none';
+});
+
+document.getElementById('liferaftSaveJobBtn').addEventListener('click', async () => {
+  const payload = {
+    id: document.getElementById('liferaftJobId').value,
+    label: document.getElementById('liferaftJobLabel').value.trim(),
+    protocol: document.getElementById('liferaftJobProtocol').value,
+    host: document.getElementById('liferaftJobHost').value.trim(),
+    port: parseInt(document.getElementById('liferaftJobPort').value, 10) || 0,
+    share: document.getElementById('liferaftJobShare').value.trim(),
+    path: document.getElementById('liferaftJobPath').value.trim() || '/',
+    credentialId: document.getElementById('liferaftJobCredential').value,
+    scheduleCron: document.getElementById('liferaftJobSchedule').value.trim(),
+    retentionDays: parseInt(document.getElementById('liferaftJobRetention').value, 10),
+    enabled: document.getElementById('liferaftJobEnabled').checked,
+  };
+  const res = await fetch('/api/liferaft/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) {
+    document.getElementById('liferaftJobForm').style.display = 'none';
+    setMsg('liferaftJobMsg', true, 'Saved.');
+    loadLifeRaftJobs();
+  } else {
+    setMsg('liferaftJobMsg', false, body.error || 'failed');
+  }
+});
+
+async function deleteLifeRaftJob(id) {
+  if (!confirm('Delete this job? Its schedule will stop, but backed-up data already on this device is kept.')) return;
+  const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const body = await res.json().catch(() => ({}));
+  setMsg('liferaftJobMsg', res.ok, res.ok ? 'Deleted.' : (body.error || 'failed'));
+  if (res.ok) loadLifeRaftJobs();
+}
+
+async function runLifeRaftJobNow(id, label) {
+  const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(id)}/run`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  setMsg('liferaftJobMsg', res.ok, res.ok ? `${label}: started -- it may be queued behind another job.` : (body.error || 'failed'));
+}
+
+async function showLifeRaftRunHistory(id, label) {
+  const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(id)}/runs`);
+  if (!res.ok) return;
+  const runs = await res.json();
+  document.getElementById('liferaftRunHistory').style.display = '';
+  document.getElementById('liferaftRunHistoryJobLabel').textContent = label;
+  const tbody = document.querySelector('#liferaftRunsTable tbody');
+  tbody.innerHTML = '';
+  runs.forEach((r) => {
+    const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : '#ff6b6b';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escapeHtml(new Date(r.startedAt).toLocaleString())}</td>
+      <td style="color:${statusColor}">${escapeHtml(r.status)}</td>
+      <td>${r.filesAdded}</td><td>${r.filesChanged}</td><td>${r.filesDeleted}</td><td>${r.versionsPruned}</td>
+      <td class="muted">${r.errors && r.errors.length ? r.errors.length + ' error(s)' : ''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// -- File browser (current/ mirror, download only) --
+function openLifeRaftBrowser(jobId, label) {
+  liferaftCurrentBrowseJob = jobId;
+  liferaftCurrentBrowsePath = '';
+  document.getElementById('liferaftBrowser').style.display = '';
+  document.getElementById('liferaftBrowserJobLabel').textContent = label;
+  loadLifeRaftBrowserPath();
+}
+
+async function loadLifeRaftBrowserPath() {
+  if (!liferaftCurrentBrowseJob) return;
+  const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(liferaftCurrentBrowseJob)}/files?path=${encodeURIComponent(liferaftCurrentBrowsePath)}`);
+  document.getElementById('liferaftBrowserPath').textContent = '/' + liferaftCurrentBrowsePath;
+  const tbody = document.querySelector('#liferaftBrowserTable tbody');
+  tbody.innerHTML = '';
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(body.error || 'failed to load')}</td></tr>`;
+    return;
+  }
+  const entries = await res.json();
+  (entries || []).forEach((e) => {
+    const tr = document.createElement('tr');
+    const sizeText = e.isDir ? '' : humanBytes(e.size);
+    tr.innerHTML = `<td></td><td>${sizeText}</td><td class="muted">${escapeHtml(new Date(e.modTime).toLocaleString())}</td><td></td>`;
+    const nameCell = tr.firstElementChild;
+    if (e.isDir) {
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = '📁 ' + e.name;
+      link.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        liferaftCurrentBrowsePath = (liferaftCurrentBrowsePath ? liferaftCurrentBrowsePath + '/' : '') + e.name;
+        loadLifeRaftBrowserPath();
+      });
+      nameCell.appendChild(link);
+    } else {
+      nameCell.textContent = e.name;
+      const dlCell = tr.lastElementChild;
+      const dlLink = document.createElement('a');
+      const filePath = (liferaftCurrentBrowsePath ? liferaftCurrentBrowsePath + '/' : '') + e.name;
+      dlLink.href = `/api/liferaft/jobs/${encodeURIComponent(liferaftCurrentBrowseJob)}/download?path=${encodeURIComponent(filePath)}`;
+      dlLink.textContent = 'Download';
+      dlLink.style.color = '#4a9eff';
+      dlCell.appendChild(dlLink);
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('liferaftBrowserUpBtn').addEventListener('click', () => {
+  if (!liferaftCurrentBrowsePath) return;
+  const parts = liferaftCurrentBrowsePath.split('/');
+  parts.pop();
+  liferaftCurrentBrowsePath = parts.join('/');
+  loadLifeRaftBrowserPath();
+});
+
+function humanBytes(n) {
+  if (n == null) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = n, unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+  return `${size.toFixed(1)} ${units[unit]}`;
+}
 
 // ---- About -----------------------------------------------------------
 async function loadAbout() {
