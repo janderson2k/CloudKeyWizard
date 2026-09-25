@@ -1621,3 +1621,111 @@ mocked table render confirmed the badge appears only on the flagged monitor).
 - Committed, pushed, published as `publish-v49` and GitHub Release
   [`v2.15.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.15.0) with the exe
   attached. CloudKeyWizard now 2.15.0, bundled FDT.Scout now 2.2.0.
+
+### Same session -- LifeRaft built: read-only SMB/FTP/FTPS pull backups onto this device's own storage
+
+The feature discussed and refined across several turns (naming: Time Capsule / Backup / Ejection
+Seat -> **LifeRaft**; credentials made a separate reusable entity; SMB+FTP+FTPS; retention as a
+fixed 1-day-to-3-month dropdown, forever for the live mirror; size+mtime change detection; a
+global one-at-a-time run queue; no restore-to-source, a read-only file browser instead) got built
+in full this pass, in two stages: storage wizard + credentials store first (verified separately),
+then jobs, the sync engine, scheduling, the file browser, and the full UI tab.
+
+**Storage wizard** (`liferaft_storage.go`, `handlers_liferaft_storage.go`) -- ports
+`phase1-format-mount-volume.sh` and `BlockDeviceService.ClassifyRisk` natively into Go: same
+wipe/format/mount-unit sequence and mounted/boot-flash(`mtd*`)/secure-partition(`*rpmb`)/virtual-
+swap(`zram*`) risk rules CloudKeyWizard already uses over SSH, so a device set up from either app
+is indistinguishable. Real gap found and fixed along the way: every existing `/volume` check in
+this codebase (`metrics.go`, `sysinfo.go`, `docker.go`, `logs.go`) uses `os.Stat("/volume")`, which
+can't tell "mounted" from "an empty directory a failed mount left behind" apart, since the Wizard's
+own `volume.mount` unit's `Where=` line creates that directory regardless of whether the mount
+itself ever succeeds. LifeRaft's own checks (`isRealMountpoint`) use the real mount table
+(`findmnt`) instead -- scoped to LifeRaft's new code only for this pass, the older sites are
+unchanged.
+
+**Credentials** (`liferaft_credentials.go`, `handlers_liferaft_credentials.go`) -- a separate,
+reusable entity per the user's explicit correction mid-design ("a single set of credentials may be
+used for multiple backup jobs... having them be user selectable to apply to other jobs will be
+useful"): protocol-agnostic (one login usable for SMB or FTP), AES-256-GCM at rest with a
+per-device key at `/etc/fdtscout/liferaft.key` (0600), same masked-`••••••••(unchanged)`-placeholder
+pattern Pushbullet/DDNS already use. Delete deliberately NOT exposed over the API until jobs
+existed, so the in-use check (`lifeRaftJobsUsingCredential`) could be real from day one rather than
+a route that looks protected but isn't -- wired in once `liferaft_jobs.go` landed. Verified in
+isolation (the real package can't build/run on this Windows host -- it also contains Linux-only
+syscalls in framebuffer.go etc.): unique nonce per encryption, exact round-trip including unicode,
+wrong-key rejection, and tamper detection all directly proven against a throwaway harness, not just
+assumed from the code reading correct.
+
+**Jobs** (`liferaft_jobs.go`) -- protocol (smb/ftp/ftps, closed enum) + host/port/share/path +
+`credentialId` reference + cron schedule + one of the 7 agreed retention values + enabled flag.
+Scheduling reuses the exact tagged-crontab mechanism `scheduledtasks.go` already has, in its own
+`fdtscout-liferaft:` tag namespace so a job's schedule can't be hand-edited or deleted from the
+user-facing Scheduled Tasks tab without desyncing it from the job's own state.
+
+**Source readers** (`liferaft_source.go`) -- the actual read-only enforcement boundary, and the
+main reason this took real care: `github.com/hirochachacha/go-smb2` and `github.com/jlaffaye/ftp`
+(both pure Go, no cgo, confirmed via real `go doc` output against the installed modules, not
+assumed from a summarized fetch) both expose full read-write clients under the hood
+(`*smb2.Share` has `Create`/`Write`/`Remove`/`RemoveAll`/`Rename`; `*ftp.ServerConn` has
+`Stor`/`StorFrom`/`Append`/`Delete`/`Rename`/`MakeDir`/`RemoveDir*`). Nothing outside this one file
+ever holds a reference to either underlying type -- the sync engine only ever sees a narrow
+`sourceReader` interface (`List`/`Open`/`Close`), which has no write method to call even by
+mistake. That's the actual guarantee LifeRaft makes about never writing back to a source: a
+code-level chokepoint, same discipline `resolveSafePath` already applies to the USB file browser.
+`go vet` caught a real bug here before it ever ran: `fmt.Sprintf("%s:%d", host, port)` breaks IPv6
+addresses -- fixed with `net.JoinHostPort` in both connect functions.
+
+**Sync engine** (`liferaft_sync.go`) -- recursively lists a source via the narrow reader, diffs
+against a persisted `{size, modTime}` manifest (size+mtime only, confirmed with the user, not a
+hash of every file every run), and applies deletion protection: a changed file's outgoing local
+copy is moved to `versions/<path>/<timestamp>` before the new content lands in `current/`; a
+source-side deletion moves the current copy to `versions/<path>/deleted-<timestamp>` instead of
+removing it. `current/` (the live mirror) is never pruned -- "forever," per the user's explicit
+instruction; only `versions/` is subject to the job's own retention window, keyed off the version
+file's own mtime (when it was captured), not the original file's mtime. Verified against a real
+temp filesystem, not just read for correctness: changed-file versioning preserves old content
+exactly, source-deletion protection with the correct `deleted-` prefix, same-second-collision
+handling produces two distinct files rather than clobbering one, and pruning removes only expired
+versions while never touching `current/` even when a live file is far older than the retention
+window.
+
+**Run queue** (`liferaft_sync.go`'s `acquireLifeRaftRunLock`) -- a durable `flock` on a fixed lock
+file, blocking (not fail-fast), so cron-triggered runs queue up strictly one after another rather
+than racing. Confirmed with the user this should be a **global** queue, not per-source: "que them
+on at a time... so we dont overwhelm a source or cause account lockouts."
+
+**File browser** (`liferaft_browse.go`, `handlers_liferaft_browse.go`) -- read-only, download only,
+scoped to `current/` via the same `resolveSafePath`-style chokepoint `files.go`'s USB browser
+already uses, adapted for LifeRaft job IDs. Caught and fixed a real bug in my own first draft here:
+job IDs contain a hyphen (`job-<hex>`), which the USB browser's own `validDeviceName` (alnum-only)
+would reject, and my fallback logic didn't actually stop a path-traversal-shaped job ID from
+escaping `lifeRaftDataRoot` before ever reaching the existence check -- fixed with a dedicated
+`validLifeRaftJobID` pattern validated before any path is built, not after. Explicitly no
+restore-to-source function, per the user's own instruction ("we never facilitate writing to the
+source -- the user can do that themselves").
+
+**UI**: new "LifeRaft" tab -- storage wizard (drive picker with the same risk-based radio-button
+gating, typed-confirmation wipe), credentials management, jobs table (run now / history / browse /
+edit / delete), per-job run history, and the file browser. Verified in the Browser pane with mocked
+`fetch` responses, not just "the page loads": the not-ready/ready branch, the drive picker
+correctly refusing a radio button for the mounted/root device, the full browser-join-shaped setup
+confirmation flow, credential and job CRUD payloads captured and confirmed correct, protocol
+switching correctly showing/hiding the SMB share field, and full file-browser navigation (list,
+descend into a directory, download-link path encoding, navigate back up) all exercised end-to-end.
+Caught and fixed one real timing bug in this pass too: `loadLifeRaftTab`'s not-ready branch called
+`loadLifeRaftDrives()` without awaiting it, a real race under fast tab-switching, not just a test
+artifact -- now properly awaited.
+
+- **Verified**: `go vet`/`go build` clean under the real target, `go mod tidy` correctly tracks
+  `go-smb2`/`jlaffaye/ftp` as direct deps. `strings`/`grep -a` on the compiled binary confirms
+  `FDT.Scout 2.3.0` and all 9 new `/api/liferaft/*` routes are actually present. Binary re-embedded
+  and confirmed byte-identical via `cmp`. C# build clean, both loose Debug and published exe
+  smoke-tested (no `crash.log`).
+- **Not live-tested against a real SMB/FTP server or real hardware** -- same standing caveat as
+  everything else in this project, but worth naming plainly here: the actual network protocol
+  round-trips (SMB session setup, FTP login/LIST/RETR) have only been verified against each
+  library's own documented API shape, never against a real server. That's the one piece most worth
+  confirming before trusting this with anything irreplaceable.
+- Committed, pushed, published as `publish-v50` and GitHub Release
+  [`v2.16.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.16.0) with the exe
+  attached. CloudKeyWizard now 2.16.0, bundled FDT.Scout now 2.3.0.
