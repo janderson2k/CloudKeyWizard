@@ -1951,3 +1951,49 @@ it's setup for max success")** -- reviewed the rest of the sync engine (`copyFro
 - Committed, pushed, published as `publish-v54` and GitHub Release
   [`v2.20.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.20.0) with the exe
   attached. CloudKeyWizard now 2.20.0, bundled FDT.Scout now 2.7.0.
+
+### Same session -- the ACTUAL root cause of vanishing runs found and fixed, proven on a real filesystem
+
+Live retest of `v2.20.0`: user confirmed the device really was running FDT.Scout 2.7.0 (About tab
+screenshot, "built 2026-09-25") -- ruling out "the device wasn't updated" as the explanation. Same
+symptom persisted regardless: "DEV Backup" started, run history stayed completely empty, not even
+the new "running"/"Interrupted" placeholder from the previous fix ever appeared. Separately, the SMB
+share-browse feature surfaced a real, concrete error: `mounting share "Data": permission denied` --
+a genuine credential/permissions rejection from the NAS at `10.0.2.6`, unrelated to this app's code.
+
+**Found the actual root cause by comparing `upsertLifeRaftRun` against `saveManifest`, not by
+guessing again**: `saveManifest` calls `os.MkdirAll(jobDataDir(jobID), 0700)` before writing;
+`upsertLifeRaftRun` (new in the previous pass) never did. A job's own data directory
+(`/volume/liferaft/<jobID>/`) only ever gets created as a side effect of a *successful* run reaching
+`saveManifest` or `copyFromSource` -- for a job that has **never once connected successfully** (which
+"DEV Backup" hadn't, given the permission-denied rejection on every attempt), that directory never
+existed. `os.WriteFile` into a nonexistent parent directory fails, and the code only ever checked
+that result to decide whether to attempt the rename -- never surfaced the failure anywhere. Both the
+"running" placeholder from the *previous* fix and the final "failed" result were silently dropped on
+every single attempt, for the entire time that fix has existed -- fully explaining why last pass's
+fix didn't resolve the visible symptom despite being real, working code.
+
+**This time, verified against a real filesystem before shipping**, not just re-read or `go vet`ed --
+this class of bug (a runtime logic error in file I/O) is invisible to both `go vet`/`go build` and
+the Browser-pane mocked-fetch tests used everywhere else this session, since neither touches actual
+Go file operations. Built a throwaway isolated harness (disposable, scratchpad only) with the exact
+unpatched logic copy-pasted verbatim: reproduced the precise real-world symptom (0 entries recorded,
+`open .../.runs.json: The system cannot find the path specified.`). Then ran the patched logic
+(`MkdirAll` first, matching `saveManifest`'s own pattern) through the same scenario: the "running"
+placeholder persists correctly, and the final upsert correctly replaces it in place (still exactly 1
+entry, not a duplicate) with the real result. Fix applied to the actual `liferaft_sync.go`,
+re-verified via `go vet`/`go build` under the real cross-compile target, binary re-embedded and
+`grep -a -c` confirms `FDT.Scout 2.7.1` present.
+
+**What this fixes and what it doesn't**: once deployed, "DEV Backup" (or any job that's never
+connected successfully) will finally show real, visible history -- most likely "Failed:
+mounting share 'Data': permission denied" the next time it's run, since that underlying NAS
+credential/permissions problem is real and still needs fixing on the NAS/credential side,
+independent of this app. This fix makes that failure *visible* instead of silent; it doesn't fix the
+permission itself.
+
+- C# build clean, both loose Debug and published exe smoke-tested (no crash.log), stray process
+  checked/killed first.
+- Committed, pushed, published as `publish-v55` and GitHub Release
+  [`v2.20.1`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.20.1) with the exe
+  attached. CloudKeyWizard now 2.20.1, bundled FDT.Scout now 2.7.1.
