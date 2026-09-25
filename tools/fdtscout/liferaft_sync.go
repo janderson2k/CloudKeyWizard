@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,12 +64,15 @@ func saveManifest(jobID string, m manifest) error {
 }
 
 // LifeRaftRunResult is both the live return value of RunLifeRaftJob and, unmarshaled the same way,
-// one entry in a job's persisted run history.
+// one entry in a job's persisted run history. ID is what makes this record findable and updatable
+// in place -- RunLifeRaftJob writes a "running" placeholder under this ID the instant it starts
+// (see the real bug this closes, below), then replaces the same record with the final result.
 type LifeRaftRunResult struct {
+	ID               string    `json:"id"`
 	JobID            string    `json:"jobId"`
 	StartedAt        time.Time `json:"startedAt"`
 	FinishedAt       time.Time `json:"finishedAt"`
-	Status           string    `json:"status"` // "ok" | "failed" | "partial"
+	Status           string    `json:"status"` // "running" | "ok" | "failed" | "partial"
 	FilesAdded       int       `json:"filesAdded"`
 	FilesChanged     int       `json:"filesChanged"`
 	FilesDeleted     int       `json:"filesDeleted"`
@@ -79,12 +84,30 @@ type LifeRaftRunResult struct {
 
 const maxLifeRaftRunHistory = 200
 
-func appendLifeRaftRun(result LifeRaftRunResult) {
+// upsertLifeRaftRun replaces the existing record with this ID, or appends a new one. Real bug this
+// closes: a run used to be recorded only once, at the very end, via a single defer -- if the whole
+// process died mid-run (a panic in a goroutine this codebase doesn't otherwise recover, an external
+// kill, a service restart) that defer never ran, and the run vanished with literally no trace: not
+// failed, not still running, just gone, indistinguishable from never having started. RunLifeRaftJob
+// now writes a "running" placeholder under a stable ID the instant it starts and upserts the same
+// record when it finishes, so even a hard process death leaves a durable, visible "stuck running"
+// entry in history instead of silence.
+func upsertLifeRaftRun(result LifeRaftRunResult) {
 	var runs []LifeRaftRunResult
 	if data, err := os.ReadFile(jobRunsPath(result.JobID)); err == nil {
 		_ = json.Unmarshal(data, &runs)
 	}
-	runs = append(runs, result)
+	replaced := false
+	for i := range runs {
+		if runs[i].ID == result.ID {
+			runs[i] = result
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		runs = append(runs, result)
+	}
 	if len(runs) > maxLifeRaftRunHistory {
 		runs = runs[len(runs)-maxLifeRaftRunHistory:]
 	}
@@ -191,8 +214,18 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	startLifeRaftJobProgress(job.ID, startedAt)
 	defer clearLifeRaftJobProgress(job.ID) // registered first -> runs last, after the run is recorded below
 
-	result := LifeRaftRunResult{JobID: job.ID, StartedAt: startedAt}
+	result := LifeRaftRunResult{ID: randomLifeRaftID("run"), JobID: job.ID, StartedAt: startedAt, Status: "running"}
+	upsertLifeRaftRun(result) // durable placeholder -- see upsertLifeRaftRun's own doc comment for why
+
 	defer func() {
+		// Catches any panic from this run's own call tree (SMB/FTP protocol code this codebase
+		// doesn't control, exercised here for the first time against real-world data) and turns it
+		// into a normal, visible "failed" run with the actual panic text -- instead of an unrecovered
+		// panic silently killing the whole FDT.Scout process (a goroutine spawned by an HTTP handler,
+		// unlike the handler itself, gets no automatic recovery from net/http).
+		if p := recover(); p != nil {
+			result.Err = fmt.Errorf("internal error: %v", p)
+		}
 		result.FinishedAt = time.Now().UTC()
 		if result.Err != nil {
 			result.Status = "failed"
@@ -202,7 +235,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 		} else {
 			result.Status = "ok"
 		}
-		appendLifeRaftRun(result)
+		upsertLifeRaftRun(result)
 		if job.NotifyPushbullet && result.Status != "ok" {
 			notifyLifeRaftJobProblem(job.Label, result.Status, result.Errors)
 		}
@@ -215,6 +248,17 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 		result.Err = fmt.Errorf("/volume is not mounted -- refusing to run rather than write to the root partition")
 		return result
 	}
+
+	// A near-full disk used to just fail every single file with the same "no space left on device"
+	// error, one Errors entry per file, burying the actual problem in noise. Refuse cleanly upfront
+	// instead -- 0.5 GB is well below anything a real transfer could usefully make progress with.
+	const minFreeGBToRun = 0.5
+	if _, freeGB := diskTotalAndFreeGB("/volume"); freeGB < minFreeGBToRun {
+		result.Err = fmt.Errorf("/volume has only %.2f GB free -- refusing to start a run below %.1f GB free", freeGB, minFreeGBToRun)
+		return result
+	}
+
+	cleanupStrayLifeRaftTempFiles(job.ID)
 
 	src, err := connectLifeRaftSource(job)
 	if err != nil {
@@ -296,6 +340,25 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	result.VersionsPruned = pruned
 
 	return result
+}
+
+// cleanupStrayLifeRaftTempFiles removes any leftover *.liferaft-tmp file under current/. These can
+// only exist if a previous run's copyFromSource was interrupted (a crash, a kill) before its own
+// rename-into-place ever ran -- a successful copy always renames its temp file away immediately, so
+// anything still named *.liferaft-tmp is guaranteed orphaned, never a file the mirror depends on.
+// Left alone across repeated interruptions, these would accumulate indefinitely and quietly eat
+// into this device's own limited storage.
+func cleanupStrayLifeRaftTempFiles(jobID string) {
+	root := jobCurrentDir(jobID)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".liferaft-tmp") {
+			os.Remove(path)
+		}
+		return nil
+	})
 }
 
 // walkSource recursively lists a source into a flat map, depth-first, using only the narrow

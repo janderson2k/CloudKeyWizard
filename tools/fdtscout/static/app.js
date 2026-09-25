@@ -795,8 +795,12 @@ async function loadLifeRaftJobs() {
     const runs = await fetch(`/api/liferaft/jobs/${encodeURIComponent(j.id)}/runs`).then((r) => r.ok ? r.json() : []);
     const lastRun = runs && runs.length ? runs[0] : null;
 
-    const status = j.running ? 'running' : (lastRun ? lastRun.status : 'never');
-    const statusLabel = { running: 'Running', ok: 'Ok', partial: 'Warning', failed: 'Failed', never: 'Never run' }[status];
+    // A persisted run can be stuck at status "running" if FDT.Scout itself died mid-run (a crash,
+    // a service restart) -- the in-memory j.running flag is what tells a genuinely active run apart
+    // from that stale leftover, which gets its own label rather than looking like a live run.
+    const orphaned = !j.running && lastRun && lastRun.status === 'running';
+    const status = j.running ? 'running' : (orphaned ? 'interrupted' : (lastRun ? lastRun.status : 'never'));
+    const statusLabel = { running: 'Running', ok: 'Ok', partial: 'Warning', failed: 'Failed', interrupted: 'Interrupted', never: 'Never run' }[status];
 
     const card = document.createElement('div');
     card.className = 'liferaft-job-card' + (j.running ? ' is-running' : '');
@@ -814,7 +818,9 @@ async function loadLifeRaftJobs() {
       html += `<div class="liferaft-progress"><div class="liferaft-progress-fill" style="width:${pct}%"></div></div>`;
     }
 
-    if (!j.running && lastRun && lastRun.errors && lastRun.errors.length) {
+    if (orphaned) {
+      html += `<div class="liferaft-error-snippet">This run started at ${escapeHtml(new Date(lastRun.startedAt).toLocaleString())} but never finished -- the device likely restarted mid-backup. Run it again.</div>`;
+    } else if (!j.running && lastRun && lastRun.errors && lastRun.errors.length) {
       html += `<div class="liferaft-error-snippet">${escapeHtml(lastRun.errors[0])}</div>`;
     }
 
@@ -1253,7 +1259,7 @@ async function showLifeRaftRunHistory(id, label) {
   const tbody = document.querySelector('#liferaftRunsTable tbody');
   tbody.innerHTML = '';
   runs.forEach((r) => {
-    const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : '#ff6b6b';
+    const statusColor = r.status === 'ok' ? '#4caf7d' : r.status === 'partial' ? '#e0b050' : r.status === 'running' ? '#4a9eff' : '#ff6b6b';
     const duration = liferaftFormatDuration(r.startedAt, r.finishedAt);
     let errorsCell = '';
     if (r.errors && r.errors.length) {

@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.6.0"
+	Version   = "2.7.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,14 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.7.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"Fixed a real bug found live: a run that got interrupted (FDT.Scout restarting mid-backup, a crash) used to vanish with zero trace -- not failed, not still running, just gone. Every run now writes a durable \"running\" record the instant it starts and updates it in place when it finishes, so an interrupted run stays visible (labeled \"Interrupted\") instead of disappearing. A panic anywhere in a run's own connection/transfer code (SMB/FTP protocol handling this app doesn't control) is now caught and recorded as a normal failed run with the actual error, instead of silently crashing the whole console.",
+			"LifeRaft now refuses to start a run when the destination is nearly out of space, with one clear error, instead of failing every single file with the same disk-full error. Leftover temp files from a previous interrupted copy are now cleaned up automatically at the start of the next run instead of accumulating forever.",
+		},
+	},
 	{
 		Version: "2.6.0",
 		Date:    "2026-09-25",
