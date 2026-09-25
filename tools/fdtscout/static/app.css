@@ -155,3 +155,40 @@ main { padding: 20px; max-width: 1000px; margin: 0 auto; }
 }
 
 .link-btn { background: none; border: none; color: var(--danger); cursor: pointer; padding: 0; margin: 0; font-size: 13px; }
+
+.liferaft-job-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.liferaft-job-card.is-running { border-color: var(--accent); }
+.liferaft-job-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.liferaft-job-title { font-size: 15px; font-weight: 600; }
+.liferaft-job-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.liferaft-status-pill { font-size: 12px; padding: 3px 10px; border-radius: 12px; white-space: nowrap; }
+.liferaft-status-pill.status-running { background: rgba(74,158,255,0.15); color: var(--accent); }
+.liferaft-status-pill.status-ok { background: rgba(76,175,125,0.15); color: var(--ok); }
+.liferaft-status-pill.status-partial { background: rgba(224,176,80,0.15); color: #e0b050; }
+.liferaft-status-pill.status-failed { background: rgba(255,107,107,0.15); color: var(--danger); }
+.liferaft-status-pill.status-never { background: rgba(138,146,163,0.15); color: var(--text-muted); }
+.liferaft-progress { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+.liferaft-progress-fill { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.liferaft-error-snippet {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(255,107,107,0.1);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--danger);
+  font-family: monospace;
+  word-break: break-word;
+}
+.liferaft-metrics { display: flex; gap: 22px; margin-top: 12px; flex-wrap: wrap; }
+.liferaft-metric-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
+.liferaft-metric-value { font-size: 15px; font-weight: 600; }
+.liferaft-job-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.liferaft-job-actions label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); margin-left: 0; }
+.liferaft-job-actions button { margin-top: 0; font-size: 12px; padding: 5px 10px; }
+.liferaft-job-actions .spacer { flex: 1; }

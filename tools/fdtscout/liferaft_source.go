@@ -25,6 +25,34 @@ import (
 
 const sourceConnectTimeout = 15 * time.Second
 
+// idleConnTimeout bounds how long a single Read or Write may go without making progress before the
+// whole run aborts with a clear error, instead of hanging forever. Real gap found live: sourceConnectTimeout
+// only bounds the initial TCP handshake -- neither go-smb2 nor jlaffaye/ftp set any deadline on the
+// connection themselves, so a source that accepts the connection but then stalls (a firewall
+// silently dropping packets rather than refusing, a server that hangs mid-negotiate) blocked the
+// run forever with no error ever recorded, and since the run lock is a blocking global queue, a
+// second "Run now" click just queued silently behind the same permanent hang. This bounds silence,
+// not total duration -- a legitimate large transfer that keeps making some progress is unaffected.
+const idleConnTimeout = 2 * time.Minute
+
+// deadlineConn resets an idle deadline on the underlying connection before every Read/Write.
+// Wrapping at the connection layer means every protocol operation (session setup, listing, file
+// reads) gets this for free, the same "wrap once at the boundary" pattern already used for the
+// read-only enforcement in this file.
+type deadlineConn struct {
+	net.Conn
+}
+
+func (c *deadlineConn) Read(b []byte) (int, error) {
+	_ = c.Conn.SetDeadline(time.Now().Add(idleConnTimeout))
+	return c.Conn.Read(b)
+}
+
+func (c *deadlineConn) Write(b []byte) (int, error) {
+	_ = c.Conn.SetDeadline(time.Now().Add(idleConnTimeout))
+	return c.Conn.Write(b)
+}
+
 // sourceEntry is one file found while listing a source -- directories are never returned
 // themselves, only implied by the paths of the files inside them, since LifeRaft only ever mirrors
 // files, never empty directory structure.
@@ -75,10 +103,11 @@ type smbSource struct {
 // before ever saving a job.
 func connectSMBSession(host string, port int, username, domain, password string) (net.Conn, *smb2.Session, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, sourceConnectTimeout)
+	rawConn, err := net.DialTimeout("tcp", addr, sourceConnectTimeout)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to %s: %w", addr, err)
 	}
+	conn := &deadlineConn{rawConn}
 	d := &smb2.Dialer{Initiator: &smb2.NTLMInitiator{User: username, Password: password, Domain: domain}}
 	session, err := d.Dial(conn)
 	if err != nil {
@@ -148,7 +177,11 @@ type ftpSource struct {
 
 func connectFTPSource(job LifeRaftJob, username, password string, useTLS bool) (sourceReader, error) {
 	addr := net.JoinHostPort(job.Host, strconv.Itoa(job.Port))
-	opts := []ftp.DialOption{ftp.DialWithTimeout(sourceConnectTimeout)}
+	rawConn, err := net.DialTimeout("tcp", addr, sourceConnectTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+	}
+	opts := []ftp.DialOption{ftp.DialWithNetConn(&deadlineConn{rawConn})}
 	if useTLS {
 		// InsecureSkipVerify is deliberate here, not an oversight: a home/office NAS's FTPS
 		// certificate is very often self-signed, and LifeRaft has no existing mechanism for the
@@ -160,7 +193,7 @@ func connectFTPSource(job LifeRaftJob, username, password string, useTLS bool) (
 	}
 	conn, err := ftp.Dial(addr, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to %s: %w", addr, err)
+		return nil, fmt.Errorf("FTP session setup with %s failed: %w", addr, err)
 	}
 	if err := conn.Login(username, password); err != nil {
 		conn.Quit()

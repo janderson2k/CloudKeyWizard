@@ -6,11 +6,13 @@ import (
 	"net/http"
 )
 
-// lifeRaftJobView adds the in-memory "is this job running right now" flag alongside the persisted
-// job fields -- a UI-visibility concern only, so it doesn't belong on the stored LifeRaftJob itself.
+// lifeRaftJobView adds the in-memory "is this job running right now" flag and, when it is, a live
+// progress snapshot -- both UI-visibility concerns only, so neither belongs on the persisted
+// LifeRaftJob itself.
 type lifeRaftJobView struct {
 	LifeRaftJob
-	Running bool `json:"running"`
+	Running  bool                  `json:"running"`
+	Progress *liferaftLiveProgress `json:"progress,omitempty"`
 }
 
 func handleLifeRaftJobsList(w http.ResponseWriter, r *http.Request, _ string) {
@@ -21,7 +23,8 @@ func handleLifeRaftJobsList(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	views := make([]lifeRaftJobView, len(jobs))
 	for i, j := range jobs {
-		views[i] = lifeRaftJobView{LifeRaftJob: j, Running: IsLifeRaftJobRunning(j.ID)}
+		progress := LifeRaftLiveProgress(j.ID)
+		views[i] = lifeRaftJobView{LifeRaftJob: j, Running: progress != nil, Progress: progress}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(views)

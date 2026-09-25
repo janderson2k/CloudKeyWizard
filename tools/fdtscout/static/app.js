@@ -584,8 +584,16 @@ async function loadLifeRaftTab() {
   }
   const el = document.getElementById('liferaftStorageStatus');
   el.innerHTML = `
-    <div>Storage: <strong style="color:#4caf7d">Ready</strong> -- ${escapeHtml(status.device || '/volume')}</div>
-    <div>${status.freeGb != null ? status.freeGb.toFixed(1) : '?'} GB free of ${status.totalGb != null ? status.totalGb.toFixed(1) : '?'} GB -- LifeRaft is using ${(status.usedByLifeRaftGb || 0).toFixed(2)} GB</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px">
+      <div>
+        <div><span style="color:#4caf7d">&#10003;</span> <strong>System ready</strong> -- ${escapeHtml(status.device || '/volume')}</div>
+        <div class="muted" style="margin-top:2px">LifeRaft is using ${(status.usedByLifeRaftGb || 0).toFixed(2)} GB</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:20px;font-weight:600">${status.freeGb != null ? status.freeGb.toFixed(1) : '?'} GB free</div>
+        <div class="muted" style="font-size:12px">of ${status.totalGb != null ? status.totalGb.toFixed(1) : '?'} GB</div>
+      </div>
+    </div>
   `;
   await loadLifeRaftCredentials();
   await loadLifeRaftJobs();
@@ -749,6 +757,7 @@ async function deleteLifeRaftCredential(id) {
 async function toggleLifeRaftJobNotify(job, checked) {
   const payload = { ...job, notifyPushbullet: checked };
   delete payload.running;
+  delete payload.progress;
   const res = await fetch('/api/liferaft/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -761,76 +770,130 @@ async function toggleLifeRaftJobNotify(job, checked) {
   }
 }
 
+let liferaftPollTimer = null;
+
+function liferaftPanelActive() {
+  const panel = document.getElementById('panel-liferaft');
+  return !!panel && panel.classList.contains('active');
+}
+
 async function loadLifeRaftJobs() {
+  if (liferaftPollTimer) { clearTimeout(liferaftPollTimer); liferaftPollTimer = null; }
+  if (!liferaftPanelActive()) return;
+
   const res = await fetch('/api/liferaft/jobs');
   if (!res.ok) return;
   const jobs = await res.json();
-  const tbody = document.querySelector('#liferaftJobsTable tbody');
-  tbody.innerHTML = '';
+  const list = document.getElementById('liferaftJobsList');
+  list.innerHTML = '';
+  let anyRunning = false;
+
   for (const j of jobs) {
+    if (j.running) anyRunning = true;
     const cred = liferaftCredsCache.find((c) => c.id === j.credentialId);
     const source = j.protocol === 'smb' ? `${j.host}/${j.share}${j.path && j.path !== '/' ? j.path : ''}` : `${j.host}${j.path || '/'}`;
     const runs = await fetch(`/api/liferaft/jobs/${encodeURIComponent(j.id)}/runs`).then((r) => r.ok ? r.json() : []);
     const lastRun = runs && runs.length ? runs[0] : null;
-    const lastRunText = lastRun ? `${new Date(lastRun.startedAt).toLocaleString()} (${lastRun.status})` : 'never';
-    const lastRunColor = !lastRun ? '#8a92a3' : (lastRun.status === 'ok' ? '#4caf7d' : lastRun.status === 'partial' ? '#e0b050' : '#ff6b6b');
-    const runningBadge = j.running ? ' <span style="color:#4a9eff">(running)</span>' : '';
 
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted">(disabled)</span>'}</td>
-      <td class="muted">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)}</td>
-      <td class="muted">${escapeHtml(cred ? cred.label : '(unknown)')}</td>
-      <td class="muted">${escapeHtml(j.scheduleCron)}</td>
-      <td class="muted">${liferaftRetentionLabel(j.retentionDays)}</td>
-      <td style="color:${lastRunColor}">${escapeHtml(lastRunText)}${runningBadge}</td><td></td><td></td>`;
-    const notifyCell = tr.children[6];
+    const status = j.running ? 'running' : (lastRun ? lastRun.status : 'never');
+    const statusLabel = { running: 'Running', ok: 'Ok', partial: 'Warning', failed: 'Failed', never: 'Never run' }[status];
+
+    const card = document.createElement('div');
+    card.className = 'liferaft-job-card' + (j.running ? ' is-running' : '');
+
+    let html = `<div class="liferaft-job-head">
+        <div>
+          <div class="liferaft-job-title">${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted" style="font-weight:400">(disabled)</span>'}</div>
+          <div class="liferaft-job-sub">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)} &middot; ${escapeHtml(cred ? cred.label : 'unknown credential')} &middot; ${escapeHtml(j.scheduleCron)}</div>
+        </div>
+        <span class="liferaft-status-pill status-${status}">${statusLabel}</span>
+      </div>`;
+
+    if (j.running && j.progress && j.progress.filesTotal > 0) {
+      const pct = Math.min(100, Math.round((j.progress.filesProcessed / j.progress.filesTotal) * 100));
+      html += `<div class="liferaft-progress"><div class="liferaft-progress-fill" style="width:${pct}%"></div></div>`;
+    }
+
+    if (!j.running && lastRun && lastRun.errors && lastRun.errors.length) {
+      html += `<div class="liferaft-error-snippet">${escapeHtml(lastRun.errors[0])}</div>`;
+    }
+
+    const metrics = j.running ? j.progress : lastRun;
+    if (metrics) {
+      const elapsedOrDuration = j.running
+        ? liferaftFormatDuration(j.progress.startedAt, new Date().toISOString())
+        : liferaftFormatDuration(lastRun.startedAt, lastRun.finishedAt);
+      html += `<div class="liferaft-metrics">
+          <div><div class="liferaft-metric-label">Added</div><div class="liferaft-metric-value">${metrics.filesAdded}</div></div>
+          <div><div class="liferaft-metric-label">Changed</div><div class="liferaft-metric-value">${metrics.filesChanged}</div></div>
+          <div><div class="liferaft-metric-label">Deleted</div><div class="liferaft-metric-value">${metrics.filesDeleted}</div></div>
+          <div><div class="liferaft-metric-label">Transferred</div><div class="liferaft-metric-value">${humanBytes(metrics.bytesTransferred)}</div></div>
+          <div><div class="liferaft-metric-label">${j.running ? 'Elapsed' : 'Duration'}</div><div class="liferaft-metric-value">${elapsedOrDuration}</div></div>
+        </div>`;
+    } else {
+      html += `<div class="muted" style="margin-top:10px;font-size:13px">No runs yet -- retention ${liferaftRetentionLabel(j.retentionDays)}</div>`;
+    }
+
+    html += `<div class="liferaft-job-actions"></div>`;
+    card.innerHTML = html;
+
+    const actions = card.querySelector('.liferaft-job-actions');
+
+    const notifyLabel = document.createElement('label');
     const notifyCheckbox = document.createElement('input');
     notifyCheckbox.type = 'checkbox';
     notifyCheckbox.checked = !!j.notifyPushbullet;
     notifyCheckbox.style.width = 'auto';
     notifyCheckbox.setAttribute('aria-label', `Notify via Pushbullet for ${j.label}`);
     notifyCheckbox.addEventListener('change', () => toggleLifeRaftJobNotify(j, notifyCheckbox.checked));
-    notifyCell.appendChild(notifyCheckbox);
-    const actionCell = tr.lastElementChild;
+    notifyLabel.appendChild(notifyCheckbox);
+    notifyLabel.appendChild(document.createTextNode('Alert on failure'));
+    actions.appendChild(notifyLabel);
+
+    const spacer = document.createElement('div');
+    spacer.className = 'spacer';
+    actions.appendChild(spacer);
 
     const runBtn = document.createElement('button');
-    runBtn.className = 'link-btn';
-    runBtn.style.color = '#4a9eff';
+    runBtn.className = 'secondary';
     runBtn.textContent = 'Run now';
+    runBtn.disabled = j.running;
     runBtn.addEventListener('click', () => runLifeRaftJobNow(j.id, j.label));
-    actionCell.appendChild(runBtn);
+    actions.appendChild(runBtn);
 
     const historyBtn = document.createElement('button');
-    historyBtn.className = 'link-btn';
-    historyBtn.style.marginLeft = '8px';
-    historyBtn.style.color = '#4a9eff';
+    historyBtn.className = 'secondary';
     historyBtn.textContent = 'History';
     historyBtn.addEventListener('click', () => showLifeRaftRunHistory(j.id, j.label));
-    actionCell.appendChild(historyBtn);
+    actions.appendChild(historyBtn);
 
     const browseBtn = document.createElement('button');
-    browseBtn.className = 'link-btn';
-    browseBtn.style.marginLeft = '8px';
-    browseBtn.style.color = '#4a9eff';
+    browseBtn.className = 'secondary';
     browseBtn.textContent = 'Browse';
     browseBtn.addEventListener('click', () => openLifeRaftBrowser(j.id, j.label));
-    actionCell.appendChild(browseBtn);
+    actions.appendChild(browseBtn);
 
     const editBtn = document.createElement('button');
-    editBtn.className = 'link-btn';
-    editBtn.style.marginLeft = '8px';
+    editBtn.className = 'secondary';
     editBtn.textContent = 'Edit';
     editBtn.addEventListener('click', () => showLifeRaftJobForm(j));
-    actionCell.appendChild(editBtn);
+    actions.appendChild(editBtn);
 
     const delBtn = document.createElement('button');
-    delBtn.className = 'link-btn';
-    delBtn.style.marginLeft = '8px';
+    delBtn.className = 'secondary';
     delBtn.textContent = 'Delete';
     delBtn.addEventListener('click', () => deleteLifeRaftJob(j.id));
-    actionCell.appendChild(delBtn);
+    actions.appendChild(delBtn);
 
-    tbody.appendChild(tr);
+    list.appendChild(card);
+  }
+
+  if (jobs.length === 0) {
+    list.innerHTML = '<p class="muted">No backup jobs yet -- add one below.</p>';
+  }
+
+  if (anyRunning && liferaftPanelActive()) {
+    liferaftPollTimer = setTimeout(loadLifeRaftJobs, 2000);
   }
 }
 
@@ -1178,6 +1241,7 @@ async function runLifeRaftJobNow(id, label) {
   const res = await fetch(`/api/liferaft/jobs/${encodeURIComponent(id)}/run`, { method: 'POST' });
   const body = await res.json().catch(() => ({}));
   setMsg('liferaftJobMsg', res.ok, res.ok ? `${label}: started -- it may be queued behind another job.` : (body.error || 'failed'));
+  if (res.ok) setTimeout(loadLifeRaftJobs, 400);
 }
 
 async function showLifeRaftRunHistory(id, label) {

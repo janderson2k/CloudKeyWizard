@@ -96,29 +96,78 @@ func appendLifeRaftRun(result LifeRaftRunResult) {
 	}
 }
 
-// liferaftRunningSet tracks which jobs are mid-run right now -- in-memory only, never persisted,
-// so it can never go stale across a restart the way a disk-backed flag could. The run lock
-// (acquireLifeRaftRunLock) already guarantees only one job runs at a time across the whole
-// device; this is purely a UI-visibility flag, not a second concurrency guard.
+// liferaftLiveProgress is what a running job reports about itself right now -- in-memory only,
+// never persisted, rebuilt fresh every run. FilesTotal/FilesProcessed come from the source listing
+// completing before the diff loop starts, so the resulting fraction is a real "how far through the
+// source tree" count, not a guessed or fabricated percentage.
+type liferaftLiveProgress struct {
+	StartedAt        time.Time `json:"startedAt"`
+	FilesTotal       int       `json:"filesTotal"`
+	FilesProcessed   int       `json:"filesProcessed"`
+	FilesAdded       int       `json:"filesAdded"`
+	FilesChanged     int       `json:"filesChanged"`
+	FilesDeleted     int       `json:"filesDeleted"`
+	BytesTransferred int64     `json:"bytesTransferred"`
+}
+
+// liferaftRunningSet tracks which jobs are mid-run right now, and their live progress -- in-memory
+// only, never persisted, so it can never go stale across a restart the way a disk-backed flag
+// could. The run lock (acquireLifeRaftRunLock) already guarantees only one job runs at a time
+// across the whole device; this is purely a UI-visibility mechanism, not a second concurrency guard.
 var (
 	liferaftRunningMu  sync.Mutex
-	liferaftRunningSet = map[string]bool{}
+	liferaftRunningSet = map[string]*liferaftLiveProgress{}
 )
 
-func setLifeRaftJobRunning(jobID string, running bool) {
+func startLifeRaftJobProgress(jobID string, startedAt time.Time) {
 	liferaftRunningMu.Lock()
 	defer liferaftRunningMu.Unlock()
-	if running {
-		liferaftRunningSet[jobID] = true
-	} else {
-		delete(liferaftRunningSet, jobID)
+	liferaftRunningSet[jobID] = &liferaftLiveProgress{StartedAt: startedAt}
+}
+
+func clearLifeRaftJobProgress(jobID string) {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	delete(liferaftRunningSet, jobID)
+}
+
+func setLifeRaftFilesTotal(jobID string, total int) {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	if p, ok := liferaftRunningSet[jobID]; ok {
+		p.FilesTotal = total
 	}
+}
+
+func updateLifeRaftLiveProgress(jobID string, processed, added, changed, deleted int, bytes int64) {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	if p, ok := liferaftRunningSet[jobID]; ok {
+		p.FilesProcessed = processed
+		p.FilesAdded = added
+		p.FilesChanged = changed
+		p.FilesDeleted = deleted
+		p.BytesTransferred = bytes
+	}
+}
+
+// LifeRaftLiveProgress returns a snapshot of a running job's progress, or nil if it isn't running.
+func LifeRaftLiveProgress(jobID string) *liferaftLiveProgress {
+	liferaftRunningMu.Lock()
+	defer liferaftRunningMu.Unlock()
+	p, ok := liferaftRunningSet[jobID]
+	if !ok {
+		return nil
+	}
+	snapshot := *p
+	return &snapshot
 }
 
 func IsLifeRaftJobRunning(jobID string) bool {
 	liferaftRunningMu.Lock()
 	defer liferaftRunningMu.Unlock()
-	return liferaftRunningSet[jobID]
+	_, ok := liferaftRunningSet[jobID]
+	return ok
 }
 
 func ListLifeRaftRuns(jobID string) []LifeRaftRunResult {
@@ -138,10 +187,11 @@ func ListLifeRaftRuns(jobID string) []LifeRaftRunResult {
 // versions, and record the run. Always records a run, even a hard failure, so the run history is
 // never silently missing an attempt that actually happened.
 func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
-	setLifeRaftJobRunning(job.ID, true)
-	defer setLifeRaftJobRunning(job.ID, false) // registered first -> runs last, after the run is recorded below
+	startedAt := time.Now().UTC()
+	startLifeRaftJobProgress(job.ID, startedAt)
+	defer clearLifeRaftJobProgress(job.ID) // registered first -> runs last, after the run is recorded below
 
-	result := LifeRaftRunResult{JobID: job.ID, StartedAt: time.Now().UTC()}
+	result := LifeRaftRunResult{JobID: job.ID, StartedAt: startedAt}
 	defer func() {
 		result.FinishedAt = time.Now().UTC()
 		if result.Err != nil {
@@ -182,11 +232,19 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 	oldManifest := loadManifest(job.ID)
 	newManifest := manifest{}
 
+	setLifeRaftFilesTotal(job.ID, len(remote))
+	processed := 0
+	reportProgress := func() {
+		processed++
+		updateLifeRaftLiveProgress(job.ID, processed, result.FilesAdded, result.FilesChanged, result.FilesDeleted, result.BytesTransferred)
+	}
+
 	for relPath, entry := range remote {
 		old, existed := oldManifest[relPath]
 		unchanged := existed && old.Size == entry.Size && old.ModTime.Equal(entry.ModTime)
 		if unchanged {
 			newManifest[relPath] = old
+			reportProgress()
 			continue
 		}
 
@@ -194,6 +252,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			// Changed -- protect the outgoing local copy before it's overwritten.
 			if err := versionExistingFile(job.ID, relPath, old.ModTime, false); err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: couldn't version previous copy: %v", relPath, err))
+				reportProgress()
 				continue
 			}
 		}
@@ -203,6 +262,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			if existed {
 				newManifest[relPath] = old // keep the old manifest entry -- the copy failed, current/ may now be missing this file, but don't claim we have a fresh one
 			}
+			reportProgress()
 			continue
 		}
 		newManifest[relPath] = manifestEntry{Size: entry.Size, ModTime: entry.ModTime}
@@ -212,6 +272,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 		} else {
 			result.FilesAdded++
 		}
+		reportProgress()
 	}
 
 	for relPath, old := range oldManifest {
@@ -224,6 +285,7 @@ func RunLifeRaftJob(job LifeRaftJob) LifeRaftRunResult {
 			continue
 		}
 		result.FilesDeleted++
+		updateLifeRaftLiveProgress(job.ID, processed, result.FilesAdded, result.FilesChanged, result.FilesDeleted, result.BytesTransferred)
 	}
 
 	if err := saveManifest(job.ID, newManifest); err != nil {

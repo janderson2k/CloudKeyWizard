@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.5.0"
+	Version   = "2.6.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,14 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.6.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"Fixed a real bug: a LifeRaft source that stalled after the initial connection (a firewall silently dropping packets, a server that hung mid-negotiate) could block a run -- and the global run queue behind it -- forever with nothing ever recorded. Connections now abort with a clear error after 2 minutes without progress.",
+			"LifeRaft's jobs list is now a real dashboard instead of a plain table: each job is a card showing its status, and a running job shows a live, honest progress bar (files actually processed out of the source's real file count) plus live-updating metrics (added/changed/deleted/transferred/elapsed) as it goes -- not a fake percentage. A finished job's card shows the same metrics from its last run, and a failed run's actual error text right on the card.",
+		},
+	},
 	{
 		Version: "2.5.0",
 		Date:    "2026-09-25",
