@@ -93,6 +93,17 @@ const maxLifeRaftRunHistory = 200
 // record when it finishes, so even a hard process death leaves a durable, visible "stuck running"
 // entry in history instead of silence.
 func upsertLifeRaftRun(result LifeRaftRunResult) {
+	// The real bug found live, twice: jobDataDir only ever got created as a side effect of a
+	// SUCCESSFUL run reaching saveManifest or copyFromSource -- for a job that has never once
+	// connected successfully (wrong credentials, unreachable host, anything failing before that
+	// point), the directory never existed, so the WriteFile below failed silently on every single
+	// attempt (its result was only ever checked to decide whether to rename, never surfaced as an
+	// error), and NEITHER the "running" placeholder NOR the final "failed" result was ever
+	// persisted -- indistinguishable from the run never having been clicked at all. Fixed the same
+	// way saveManifest already does it.
+	if err := os.MkdirAll(jobDataDir(result.JobID), 0700); err != nil {
+		return
+	}
 	var runs []LifeRaftRunResult
 	if data, err := os.ReadFile(jobRunsPath(result.JobID)); err == nil {
 		_ = json.Unmarshal(data, &runs)

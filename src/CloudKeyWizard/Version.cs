@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.20.0";
+    public const string Version = "2.20.1";
     public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.7.0";
+    public const string BundledFdtScoutVersion = "2.7.1";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.20.1", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.7.1: fixed the actual cause behind LifeRaft runs still vanishing after the previous fix -- a job's run history silently failed to save for any job that had never once connected successfully, because its own data folder didn't exist yet and nothing created it before writing. A run that fails at the connection step (bad credentials, unreachable host, a share permission error) now shows that failure instead of showing nothing.",
+        }),
         new("2.20.0", "2026-09-25", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.7.0: fixed a real bug found live where an interrupted LifeRaft run (the console restarting mid-backup) vanished with zero trace instead of showing as failed or still running -- every run is now durably recorded from the moment it starts and shows as \"Interrupted\" if it never finished, and a crash anywhere in the transfer code is now caught and recorded as a normal failed run instead of silently taking the whole console down. LifeRaft also now refuses to start a run when the destination is nearly full (one clear error instead of failing every file individually) and cleans up leftover temp files from a previous interrupted copy automatically.",

@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.7.0"
+	Version   = "2.7.1"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,13 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.7.1",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"Fixed the actual bug behind runs still vanishing after 2.7.0's fix: a job's run-history write silently failed for any job that had never once connected successfully, because its data folder didn't exist yet and nothing created it before writing to it. A job whose only attempts fail at the connection step (bad credentials, unreachable host, share permission denied) can now show that failure instead of showing nothing at all. Proven against a real filesystem, not just re-read.",
+		},
+	},
 	{
 		Version: "2.7.0",
 		Date:    "2026-09-25",
