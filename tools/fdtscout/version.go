@@ -5,7 +5,7 @@ package main
 // installs this one. Bump these together with the changelog below whenever this Go source changes
 // and gets recompiled/re-embedded.
 const (
-	Version   = "2.8.0"
+	Version   = "2.9.0"
 	BuildDate = "2026-09-25"
 )
 
@@ -16,6 +16,15 @@ type ChangelogEntry struct {
 }
 
 var Changelog = []ChangelogEntry{
+	{
+		Version: "2.9.0",
+		Date:    "2026-09-25",
+		Notes: []string{
+			"Fixed a real bug: editing a job (unchecking Enabled, changing its label/source/schedule) didn't show up in the jobs list until a manual page refresh. Enable/Disable is now also its own quick-toggle button on each job, next to Run now, instead of only being changeable from inside the edit form.",
+			"The Run now button now turns into a Stop button while that job is running, instead of just greying out next to a separate Stop button.",
+			"New: the Apps tab can check GitHub for a newer FDT.Scout release and update itself directly -- no need to go back to the Windows wizard and reconnect over SSH. Always user-initiated (a Check button, then an Update button that only appears if something's actually newer); this is the one place this console reaches the internet at all.",
+		},
+	},
 	{
 		Version: "2.8.0",
 		Date:    "2026-09-25",

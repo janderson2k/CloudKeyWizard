@@ -191,6 +191,8 @@ func runServer(users *UserStore) {
 	mux.HandleFunc("POST /api/processes/{pid}/kill", requireAuth(sessions, true, handleProcessKill))
 	mux.HandleFunc("GET /api/apps", requireAuth(sessions, true, handleAppsList))
 	mux.HandleFunc("POST /api/apps/{id}/action", requireAuth(sessions, true, handleAppAction))
+	mux.HandleFunc("GET /api/apps/fdtscout/check-update", requireAuth(sessions, true, handleFDTScoutCheckUpdate))
+	mux.HandleFunc("POST /api/apps/fdtscout/apply-update", requireAuth(sessions, true, handleFDTScoutApplyUpdate))
 	mux.HandleFunc("GET /api/install", requireAuth(sessions, true, handleInstallList))
 	mux.HandleFunc("POST /api/install/{id}", requireAuth(sessions, true, handleInstallRun))
 	mux.HandleFunc("GET /api/about", requireAuth(sessions, true, handleAbout))

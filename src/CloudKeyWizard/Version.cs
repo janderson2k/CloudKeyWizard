@@ -7,7 +7,7 @@ namespace CloudKeyWizard;
 /// short in-app version).</summary>
 public static class AppVersion
 {
-    public const string Version = "2.21.0";
+    public const string Version = "2.22.0";
     public const string BuildDate = "2026-09-25";
 
     /// <summary>The FDT.Scout version actually bundled/embedded in THIS build (Scripts/fdtscout/
@@ -18,12 +18,16 @@ public static class AppVersion
     /// version-check against an already-converted device's installed FDT.Scout (fdtscout -version
     /// over SSH) to tell the operator whether re-running that Extra would actually install
     /// something newer.</summary>
-    public const string BundledFdtScoutVersion = "2.8.0";
+    public const string BundledFdtScoutVersion = "2.9.0";
 
     public sealed record ChangelogEntry(string Version, string Date, string[] Notes);
 
     public static readonly ChangelogEntry[] Changelog =
     {
+        new("2.22.0", "2026-09-25", new[]
+        {
+            "Bundled FDT.Scout console upgraded to 2.9.0: fixed a real bug where editing a job didn't show up in the jobs list until a manual page refresh; Enable/Disable is now its own quick-toggle button next to Run now; Run now now turns into Stop while a job is running instead of just greying out; and the Apps tab can now check GitHub for a newer FDT.Scout release and update itself directly, without needing to reconnect through this wizard over SSH.",
+        }),
         new("2.21.0", "2026-09-25", new[]
         {
             "Bundled FDT.Scout console upgraded to 2.8.0: fixed a real bug where SMB jobs ignored the configured subfolder and always backed up the whole share; added a \"Test connection\" button on the job form to check host/share/path/credential before saving; added a real Stop button for a running job (takes effect between files, recorded honestly as \"Stopped\" with whatever was already backed up kept); and fixed the jobs list rebuilding itself every 2 seconds while a job ran, which could make a nearby field feel impossible to type into.",

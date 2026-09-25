@@ -293,6 +293,23 @@ async function loadApps() {
       });
     }
 
+    // FDT.Scout is the one "app" in this list actually sourced from this project's own GitHub
+    // repo -- everything else here is an apt package, a vendor binary, or installed via
+    // CloudKeyWizard's own SSH-driven Extras flow. Real friction this same session hit directly:
+    // getting a newer FDT.Scout onto the device required going back to the Windows wizard,
+    // reconnecting over SSH, and clicking Update every time. This lets the console check GitHub
+    // and update itself, without needing the Windows app at all -- user-initiated only (a Check
+    // button, then an Update button that only appears once something's actually available), never
+    // automatic, since this is the one place FDT.Scout reaches the internet at all.
+    if (app.id === 'fdtscout') {
+      const checkBtn = document.createElement('button');
+      checkBtn.className = 'secondary';
+      checkBtn.style.marginRight = '6px';
+      checkBtn.textContent = 'Check for update';
+      checkBtn.addEventListener('click', () => checkFDTScoutUpdate(tr, checkBtn));
+      actionCell.appendChild(checkBtn);
+    }
+
     const def = catalogById[app.id];
     let formRow = null;
     if (!app.installed && def) {
@@ -310,6 +327,65 @@ async function loadApps() {
     tbody.appendChild(tr);
     if (formRow) tbody.appendChild(formRow);
   });
+}
+
+async function checkFDTScoutUpdate(tr, checkBtn) {
+  checkBtn.disabled = true;
+  const actionCell = checkBtn.parentElement;
+  let msg = actionCell.querySelector('.fdtscout-update-msg');
+  if (!msg) {
+    msg = document.createElement('div');
+    msg.style.marginTop = '6px';
+    actionCell.appendChild(msg);
+  }
+  msg.className = 'fdtscout-update-msg msg';
+  msg.textContent = 'Checking GitHub...';
+
+  const res = await fetch('/api/apps/fdtscout/check-update');
+  const body = await res.json().catch(() => ({}));
+  checkBtn.disabled = false;
+
+  if (!res.ok || body.error) {
+    msg.className = 'fdtscout-update-msg msg error';
+    msg.textContent = body.error || 'Check failed.';
+    return;
+  }
+  if (!body.available) {
+    msg.className = 'fdtscout-update-msg msg ok';
+    msg.textContent = `Up to date (v${body.currentVersion}).`;
+    return;
+  }
+
+  msg.className = 'fdtscout-update-msg msg';
+  msg.textContent = `v${body.latestVersion} is available (currently running v${body.currentVersion}).`;
+
+  let updateBtn = actionCell.querySelector('.fdtscout-update-btn');
+  if (!updateBtn) {
+    updateBtn = document.createElement('button');
+    updateBtn.className = 'fdtscout-update-btn';
+    updateBtn.style.marginRight = '6px';
+    updateBtn.addEventListener('click', () => applyFDTScoutUpdate(updateBtn, msg));
+    actionCell.insertBefore(updateBtn, msg);
+  }
+  updateBtn.textContent = `Update to v${body.latestVersion}`;
+}
+
+async function applyFDTScoutUpdate(updateBtn, msg) {
+  updateBtn.disabled = true;
+  msg.className = 'fdtscout-update-msg msg';
+  msg.textContent = 'Downloading and installing -- this console will restart in a few seconds.';
+
+  const res = await fetch('/api/apps/fdtscout/apply-update', { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok || body.error) {
+    msg.className = 'fdtscout-update-msg msg error';
+    msg.textContent = body.error || 'Update failed.';
+    updateBtn.disabled = false;
+    return;
+  }
+  msg.className = 'fdtscout-update-msg msg ok';
+  msg.textContent = `Installed v${body.version} -- restarting now. Reload this page in about 10 seconds.`;
 }
 
 function buildInstallFormRow(def) {
@@ -568,6 +644,9 @@ document.getElementById('dockerRunForm').addEventListener('submit', async (e) =>
 // jobs), then jobs themselves, then per-job run history and a read-only file browser -- no
 // restore-to-source, by design; the browser is how you get your stuff back out.
 let liferaftCredsCache = [];
+let liferaftJobsCache = []; // latest fetch -- button handlers look up fresh data here at click time
+                            // rather than closing over a possibly-stale job snapshot from whenever
+                            // their card was first built (see loadLifeRaftJobs's real bug fix)
 let liferaftDrivesCache = [];
 let liferaftCurrentBrowseJob = null;
 let liferaftCurrentBrowsePath = '';
@@ -766,8 +845,27 @@ async function toggleLifeRaftJobNotify(job, checked) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     setMsg('liferaftJobMsg', false, body.error || 'failed to update alert setting');
-    loadLifeRaftJobs();
   }
+  loadLifeRaftJobs();
+}
+
+// Same pattern for the Enable/Disable quick-toggle button -- previously Enabled could only be
+// changed from inside the edit form, and even then the jobs list's own "(disabled)" label didn't
+// update without a manual page refresh (see loadLifeRaftJobs's head-refresh fix, below, for why).
+async function toggleLifeRaftJobEnabled(job) {
+  const payload = { ...job, enabled: !job.enabled };
+  delete payload.running;
+  delete payload.progress;
+  const res = await fetch('/api/liferaft/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    setMsg('liferaftJobMsg', false, body.error || 'failed to update');
+  }
+  loadLifeRaftJobs();
 }
 
 let liferaftPollTimer = null;
@@ -819,22 +917,31 @@ function renderLifeRaftJobDynamic(j, lastRun) {
   return html;
 }
 
-// Builds a job card the first time it's seen: static head (title/source, never changes after
-// creation) + the dynamic region (see above) + the action row (buttons/checkbox, listeners
-// attached once and never re-created).
-function buildLifeRaftJobCard(j) {
+// Builds the head region's HTML (title, disabled marker, source/credential/schedule line). Split
+// out from buildLifeRaftJobCard because it has to be re-rendered on every load/poll, not just once:
+// the head was previously written only at card-creation time and never touched again once the
+// polling fix stopped rebuilding the whole list, so editing a job (unchecking Enabled, changing its
+// label/source/schedule) silently didn't show up in the list until a manual page refresh. Unlike
+// the action buttons, the head has no listeners or focusable state to lose, so re-rendering it
+// every time is cheap and doesn't reintroduce the disruption the dynamic-region split was fixing.
+function renderLifeRaftJobHead(j) {
   const cred = liferaftCredsCache.find((c) => c.id === j.credentialId);
   const source = j.protocol === 'smb' ? `${j.host}/${j.share}${j.path && j.path !== '/' ? j.path : ''}` : `${j.host}${j.path || '/'}`;
+  return `<div>
+      <div class="liferaft-job-title">${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted" style="font-weight:400">(disabled)</span>'}</div>
+      <div class="liferaft-job-sub">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)} &middot; ${escapeHtml(cred ? cred.label : 'unknown credential')} &middot; ${escapeHtml(j.scheduleCron)}</div>
+    </div>`;
+}
 
+// Builds a job card the first time it's seen: the head + dynamic regions (both re-rendered on
+// every subsequent load, see renderLifeRaftJobHead's comment) + the action row (buttons/checkbox,
+// listeners attached once here and never re-created).
+function buildLifeRaftJobCard(j) {
   const card = document.createElement('div');
   card.dataset.jobId = j.id;
 
   const head = document.createElement('div');
   head.className = 'liferaft-job-head';
-  head.innerHTML = `<div>
-      <div class="liferaft-job-title">${escapeHtml(j.label)}${j.enabled ? '' : ' <span class="muted" style="font-weight:400">(disabled)</span>'}</div>
-      <div class="liferaft-job-sub">${escapeHtml(j.protocol.toUpperCase())}: ${escapeHtml(source)} &middot; ${escapeHtml(cred ? cred.label : 'unknown credential')} &middot; ${escapeHtml(j.scheduleCron)}</div>
-    </div>`;
   card.appendChild(head);
 
   const dynamic = document.createElement('div');
@@ -850,7 +957,10 @@ function buildLifeRaftJobCard(j) {
   notifyCheckbox.className = 'liferaft-notify-checkbox';
   notifyCheckbox.style.width = 'auto';
   notifyCheckbox.setAttribute('aria-label', `Notify via Pushbullet for ${j.label}`);
-  notifyCheckbox.addEventListener('change', () => toggleLifeRaftJobNotify(j, notifyCheckbox.checked));
+  notifyCheckbox.addEventListener('change', () => {
+    const current = liferaftJobsCache.find((x) => x.id === j.id) || j;
+    toggleLifeRaftJobNotify(current, notifyCheckbox.checked);
+  });
   notifyLabel.appendChild(notifyCheckbox);
   notifyLabel.appendChild(document.createTextNode('Alert on failure'));
   actions.appendChild(notifyLabel);
@@ -859,18 +969,25 @@ function buildLifeRaftJobCard(j) {
   spacer.className = 'spacer';
   actions.appendChild(spacer);
 
-  const runBtn = document.createElement('button');
-  runBtn.className = 'secondary liferaft-run-btn';
-  runBtn.textContent = 'Run now';
-  runBtn.addEventListener('click', () => runLifeRaftJobNow(j.id, j.label));
-  actions.appendChild(runBtn);
+  const enableBtn = document.createElement('button');
+  enableBtn.className = 'secondary liferaft-enable-btn';
+  enableBtn.addEventListener('click', () => {
+    const current = liferaftJobsCache.find((x) => x.id === j.id) || j;
+    toggleLifeRaftJobEnabled(current);
+  });
+  actions.appendChild(enableBtn);
 
-  const stopBtn = document.createElement('button');
-  stopBtn.className = 'secondary liferaft-stop-btn';
-  stopBtn.textContent = 'Stop';
-  stopBtn.style.display = 'none';
-  stopBtn.addEventListener('click', () => stopLifeRaftJobNow(j.id, j.label));
-  actions.appendChild(stopBtn);
+  // One button that toggles between "Run now" and "Stop" depending on live state, rather than a
+  // disabled Run button sitting next to a separate Stop button -- reads the button's own data
+  // attribute at click time (set on every update below) so a single listener, attached once, can
+  // still always take the currently-correct action.
+  const runStopBtn = document.createElement('button');
+  runStopBtn.className = 'secondary liferaft-runstop-btn';
+  runStopBtn.addEventListener('click', () => {
+    if (runStopBtn.dataset.running === 'true') stopLifeRaftJobNow(j.id, j.label);
+    else runLifeRaftJobNow(j.id, j.label);
+  });
+  actions.appendChild(runStopBtn);
 
   const historyBtn = document.createElement('button');
   historyBtn.className = 'secondary';
@@ -887,7 +1004,10 @@ function buildLifeRaftJobCard(j) {
   const editBtn = document.createElement('button');
   editBtn.className = 'secondary';
   editBtn.textContent = 'Edit';
-  editBtn.addEventListener('click', () => showLifeRaftJobForm(j));
+  editBtn.addEventListener('click', () => {
+    const current = liferaftJobsCache.find((x) => x.id === j.id) || j;
+    showLifeRaftJobForm(current);
+  });
   actions.appendChild(editBtn);
 
   const delBtn = document.createElement('button');
@@ -907,6 +1027,7 @@ async function loadLifeRaftJobs() {
   const res = await fetch('/api/liferaft/jobs');
   if (!res.ok) return;
   const jobs = await res.json();
+  liferaftJobsCache = jobs;
   const list = document.getElementById('liferaftJobsList');
   let anyRunning = false;
 
@@ -932,10 +1053,14 @@ async function loadLifeRaftJobs() {
       list.appendChild(card);
     }
     card.classList.toggle('is-running', !!j.running);
+    card.querySelector('.liferaft-job-head').innerHTML = renderLifeRaftJobHead(j);
     card.querySelector('.liferaft-job-dynamic').innerHTML = renderLifeRaftJobDynamic(j, lastRun);
     card.querySelector('.liferaft-notify-checkbox').checked = !!j.notifyPushbullet;
-    card.querySelector('.liferaft-run-btn').disabled = !!j.running;
-    card.querySelector('.liferaft-stop-btn').style.display = j.running ? '' : 'none';
+    const enableBtn = card.querySelector('.liferaft-enable-btn');
+    enableBtn.textContent = j.enabled ? 'Disable' : 'Enable';
+    const runStopBtn = card.querySelector('.liferaft-runstop-btn');
+    runStopBtn.textContent = j.running ? 'Stop' : 'Run now';
+    runStopBtn.dataset.running = j.running ? 'true' : 'false';
   }
 
   for (const [id, el] of existingCards) {
