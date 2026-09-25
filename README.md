@@ -21,8 +21,8 @@ that same folder) remain under those terms, unmodified.
 discussed-but-not-built features, a map of what exists today and where it lives, and a
 session-by-session changelog. Keep it up to date as the source of truth for "where did we leave off."
 
-Version 2.0.0 (also shown in-app: Help → About / View Changelog). FDT.Scout, the optional web
-console, is versioned independently (currently 1.7.0, its own About tab). Provided for
+Version 2.22.0 (also shown in-app: Help → About / View Changelog). FDT.Scout, the optional web
+console, is versioned independently (currently 2.9.0, its own About tab). Provided for
 informational and convenience purposes only, as-is, no warranty — use at your own risk; not
 affiliated with or endorsed by Ubiquiti Inc.
 
@@ -48,35 +48,55 @@ affiliated with or endorsed by Ubiquiti Inc.
   targets a separate VPS with Docker Swarm + Traefik already running, not the Cloud Key at all, so
   there's nothing for an SSH-only tool like this to drive there.
   Also in General: **FDT.Scout**, an app-authored (not jnovack/cloudkey) password-gated HTTPS web
-  console for the device — user accounts with login history and lockout after repeated failures, a
-  real web terminal (a genuine PTY over WebSocket, not a command box), TLS certificate
-  generate/install plus a configurable HTTPS port and an 80→HTTPS redirect toggle, the front-panel
-  display itself (hostname + IP, drawn directly to the framebuffer, updates live when you change
-  the hostname), a top-style process view with a Kill button, System specs and 7-day health charts
-  including network throughput, USB drive mount/unmount with a read-only file browser, static
-  IP/DHCP control (a change is provisional for 5 minutes — confirm it or it reverts automatically),
-  and an Apps tab that can now actually install things — full parity with the Extras above, reusing
-  the exact same bundled scripts rather than a second copy. An About tab rounds it out. Source at
-  `tools/fdtscout/`, cross-compiled to a single
-  linux/arm64 binary and embedded the same way the runbook scripts are — no compiler needed on the
-  device. Listed first and recommended by default, but still requires the same one Run click every
-  Extra requires; it opens a real root-capable HTTPS listener on your network the moment it
-  finishes, gated only by the password you set, so it's flagged plainly rather than treated as just
-  another checkbox.
+  console installed onto the device itself. Started as a basic admin console; has grown into most
+  of what you'd want running standalone on the box:
+  - **LifeRaft** — read-only pull backups from SMB/FTP/FTPS sources onto the device's own storage,
+    so if the worst happens you can grab the Cloud Key out of the rack and still have your stuff. A
+    changed or source-deleted file is protected (kept, never overwritten) for a retention window
+    you choose per job; the live mirror itself is kept forever. Jobs run one at a time device-wide,
+    with a live progress view while running, a read-only file browser to get your stuff back out
+    (never writes back to a source, by design), and optional Pushbullet alerts on failure.
+  - **Monitoring** — ping/TCP/HTTP/DNS host checks with uptime/latency history, an automatic WAN
+    speed test, public-IP tracking with optional Cloudflare DDNS, on-demand local-network/port
+    scanning, a passive LAN device list with Wake-on-LAN, log aggregation with retention, and
+    real-crontab scheduled tasks.
+  - **Pushbullet integration** — proactive alerts (disk space, a service going down, login
+    lockouts, IP changes, an optional daily digest) plus a two-way command channel: text the
+    device's callsign and it replies, with a confirm step before any action actually runs.
+  - **Docker tab** — general-purpose container management (install, lifecycle control, logs, a
+    run-from-image form, storage relocation to real storage), separate from any single Extra's own
+    container use.
+  - Plus the original console: user accounts with login history/lockout, a real web terminal
+    (genuine PTY over WebSocket), TLS certificate generate/install with a configurable HTTPS port,
+    the front-panel display (hostname + IP, drawn directly to the framebuffer), a top-style process
+    view, System specs and health charts, USB drive browsing, static IP/DHCP control (provisional
+    for 5 minutes, auto-reverts if not confirmed), Tailscale tailnet join right from the GUI (not
+    just install), an Apps tab with full install/lifecycle parity with the Extras above, and
+    self-update — checks GitHub for a newer FDT.Scout release and installs it directly, no need to
+    reconnect this wizard over SSH.
+
+  Source at `tools/fdtscout/`, cross-compiled to a single linux/arm64 binary and embedded the same
+  way the runbook scripts are — no compiler needed on the device. Listed first and recommended by
+  default, but still requires the same one Run click every Extra requires; it opens a real
+  root-capable HTTPS listener on your network the moment it finishes, gated only by the password you
+  set, so it's flagged plainly rather than treated as just another checkbox.
 - **Finish & Summary** shows a live report (host, model, auth method, every step's final status)
   and a password-change utility (`security-unlock.sh` → `chpasswd` → `security-lock.sh`) for
   setting a new password on `root`/`cloudkey` even after Harden Access has disabled password login.
 
 ## Safety model
 
-- **Fully self-contained — no runtime GitHub dependency.** Every script this app runs is bundled
-  directly into the exe at build time (`Services/BundledScriptProvider.cs`, sourced verbatim from
-  jnovack/cloudkey at a pinned commit — see `Scripts/runbook/README.md`), SHA-256 hashed at read
-  time, with the hash and upstream reference URL shown in the UI before you run anything. The SSH
-  connection to the Cloud Key is the *only* network activity this app performs — one exception:
-  the optional LCD-replacement step calls out to GitHub **from the Cloud Key itself**, not from
-  this app, to download jnovack/cloudkey's prebuilt binary (unavoidable; it's a compiled release
-  asset, not something this app can bundle as source).
+- **Fully self-contained — no runtime GitHub dependency, with two narrow, named exceptions.** Every
+  script this app runs is bundled directly into the exe at build time
+  (`Services/BundledScriptProvider.cs`, sourced verbatim from jnovack/cloudkey at a pinned commit —
+  see `Scripts/runbook/README.md`), SHA-256 hashed at read time, with the hash and upstream
+  reference URL shown in the UI before you run anything. The SSH connection to the Cloud Key is the
+  main network activity this app performs, with two exceptions, both from the **Cloud Key itself**,
+  never from the Windows app: the optional LCD-replacement step calls out to GitHub to download
+  jnovack/cloudkey's prebuilt binary (unavoidable — it's a compiled release asset, not something
+  this app can bundle as source), and FDT.Scout's self-update feature checks this project's own
+  GitHub releases for a newer version, strictly user-initiated (a Check button, then an Update
+  button) and never automatic.
 - **Full transparency.** Every command run — by the wizard or by you in the "drop to shell" pane —
   streams into the terminal log in real time. Nothing happens off-screen.
 - **Danger-tier steps require typed confirmation**, not just a click: purging the UniFi stack,
@@ -133,7 +153,7 @@ dotnet build src/CloudKeyWizard/CloudKeyWizard.csproj
 pwsh -File scripts/Publish.ps1
 ```
 
-Produces `publish/CloudKeyWizard.exe` — a single self-contained win-x64 file (~70MB; WPF can't be
+Produces `publish/CloudKeyWizard.exe` — a single self-contained win-x64 file (~75MB; WPF can't be
 safely trimmed, so this isn't a tiny console-tool-sized exe). No installer, no registry writes, no
 admin rights, no separate .NET runtime needed on the target machine. Copy it anywhere and run it.
 
