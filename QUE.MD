@@ -1997,3 +1997,66 @@ permission itself.
 - Committed, pushed, published as `publish-v55` and GitHub Release
   [`v2.20.1`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.20.1) with the exe
   attached. CloudKeyWizard now 2.20.1, bundled FDT.Scout now 2.7.1.
+
+### Same session -- SMB path bug, Test connection, Stop button, disruptive-polling fix
+
+Live retest of `v2.20.1` against real hardware surfaced a batch of real, concrete issues in one
+pass: the job form's UNC-paste field felt impossible to type into, the whole screen kept "hard
+refreshing" and was hard to interact with while a job was running, no way to test a connection
+before saving a job, and no way to stop a running job. While investigating the UNC-field/refresh
+complaint, a much more serious, unrelated bug turned up: **SMB jobs completely ignored the
+configured "Path within the share"** and always backed up the ENTIRE share from its root, not the
+configured subfolder -- found by checking what "Test connection" should even test against, not
+reported by the user, but real and urgent (a "DEV Backup" job scoped to one folder would have
+actually backed up everything on that share once it could connect at all).
+
+**SMB path fix**: `smbSource` gained a `root` field (job.Path), and `List`/`Open` now join against
+it -- matching the pattern `ftpSource` already used correctly. **Caught a second bug this
+introduced before it ever shipped**: `job.Path` always starts with `/` (defaulted, never blank), so
+`path.Join(root, dir)` always produces a leading `/` -- checked directly against go-smb2's own
+vendored source (`validatePath` in `path.go`) rather than assumed, and confirmed it explicitly
+rejects a leading `\` on every `Open`/`ReadDir` call. Left as originally written, this fix would have
+made every single SMB job fail outright -- a regression worse than the bug it fixed. `smbJoin` now
+strips the leading separator; verified with an isolated harness reproducing the real path values
+(`/`, `/#Shares/UserFolders/jason.anderson/#Dev`) through the exact join-then-validate logic before
+trusting it.
+
+**Test connection**: new `POST /api/liferaft/test` runs the *exact* connect-and-list logic a real
+run uses, against whatever's currently typed into the job form (not yet saved), for both SMB and
+FTP/FTPS -- previously only SMB had any pre-save check at all, via Browse, and FTP/FTPS had none.
+A pass here means a real run will get past the connection step too, not a lighter/different check
+that could give false confidence. (Ran into Go's `_test.go` filename convention along the way --
+the first draft, `handlers_liferaft_test.go`, was silently excluded from `go build` entirely since
+Go treats any `*_test.go` file as test-only; renamed to `handlers_liferaft_testconn.go`.)
+
+**Stop button**: a single global cancel channel (only one job ever runs at a time, per the existing
+run lock) checked between files in the diff loop and between directories during the initial listing
+-- not mid-transfer, which would need real plumbing into the connection layer itself, out of scope
+for this pass. A stopped run is honestly recorded as "cancelled"/"Stopped," not a failure, and
+whatever was already copied before the stop is kept (the loop breaks, but manifest-save and
+version-pruning still run normally on whatever completed).
+
+**Disruptive polling, the actual root cause of the "can't edit" and "keeps refreshing" reports**:
+the jobs list rebuilt every card and every button/listener from scratch on every 2-second poll while
+any job was running (`list.innerHTML = ''` + full rebuild) -- the job form sits as a sibling in the
+same panel, and the resulting layout thrash made a field the user was actively typing into feel
+broken. Refactored so a card is only ever fully built once; a poll now replaces just the small
+"dynamic" region (status pill/progress bar/metrics) via a stable `data-job-id`-keyed lookup, and
+updates a couple of button/checkbox properties directly -- nothing else on the page is touched.
+
+- **Verified**: go vet/build clean, binary re-embedded/byte-confirmed, `grep -a -c` confirms
+  `FDT.Scout 2.8.0` and all the new code (stop/test-connection strings) present in the compiled
+  binary. Frontend verified in the Browser pane with a mocked-fetch harness driving a genuinely
+  "running" job: confirmed the exact same card DOM element persists across a poll (not recreated),
+  confirmed a value typed into the UNC field survives a poll tick untouched, confirmed the Stop
+  button shows/works and Run now correctly disables while running, confirmed Test Connection's
+  success and failure paths render correctly with the real payload sent, confirmed a "cancelled" run
+  renders correctly in history (right color, duration, and partial progress preserved). C# build
+  clean, both loose Debug and published exe smoke-tested (no crash.log), stray process checked/
+  killed first.
+- **Not live-tested against the user's actual hardware for any of this** -- built and verified by
+  code-level proof (including against go-smb2's real vendored source, not assumed) and every means
+  available short of that device.
+- Committed, pushed, published as `publish-v56` and GitHub Release
+  [`v2.21.0`](https://github.com/janderson2k/CloudKeyWizard/releases/tag/v2.21.0) with the exe
+  attached. CloudKeyWizard now 2.21.0, bundled FDT.Scout now 2.8.0.
